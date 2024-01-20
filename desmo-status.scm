@@ -1,4 +1,7 @@
 (module desmo-status (run-status)
-  (import scheme)
-  (define (run-status opts) 'todo))
+  (import scheme
+          (chicken base))
+  (define (run-status opts)
+    (print "TODO")
+    'todo))
 

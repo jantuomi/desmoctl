@@ -5,6 +5,8 @@
         matchable
         test
         desmo-apply
+        desmo-status
+        desmo-logs
         )
 
 (define should-run-inline-tests?
@@ -71,15 +73,12 @@
   (match args
     [("apply")
      '(parse-ok cmd-apply ())]
-    [("status" . rest)
-     (print "TODO status subcommand")
-     (exit 0)]
-    [("logs" . rest)
-     (print "TODO logs subcommand")
-     (exit 0)]
-    [("help" . rest)
-     (print usage-string)
-     (exit 0)]
+    [("status")
+     '(parse-ok cmd-status ())]
+    [("logs")
+     '(parse-ok cmd-logs ())]
+    [("help")
+     '(parse-ok cmd-help ())]
     [_ `(parse-error ,usage-string)]))
 
 (inline-tests
@@ -98,8 +97,8 @@
 (define cli-opts (cadr top-level-flags-parse-result))
 (define cli-subcommand-args (caddr top-level-flags-parse-result))
 
-(print (format "debug: cli-opts: ~A" cli-opts))
-(print (format "debug: cli-subcommand-args: ~A" cli-subcommand-args))
+;; (print (format "debug: cli-opts: ~A" cli-opts))
+;; (print (format "debug: cli-subcommand-args: ~A" cli-subcommand-args))
 
 (define subcommand-parse-result (parse-subcommand cli-subcommand-args))
 
@@ -111,20 +110,18 @@
 (define cli-subcommand (cadr subcommand-parse-result))
 (define cli-opts (append (caddr subcommand-parse-result) cli-opts))
 
-(print (format "debug: cli-subcommand: ~A" cli-subcommand))
-(print (format "debug: cli-opts: ~A" cli-opts))
+;; (print (format "debug: cli-subcommand: ~A" cli-subcommand))
+;; (print (format "debug: cli-opts: ~A" cli-opts))
 
 ; evaluate parsed command
 
-(define (eval-apply opts)
-  'done)
-
 (define (eval-subcommand subcmd opts)
   (match subcmd
-    ['cmd-apply (eval-apply opts)]
+    ['cmd-apply (run-apply opts)]
+    ['cmd-status (run-status opts)]
+    ['cmd-logs (run-logs opts)]
+    ['cmd-help (print usage-string) 'done]
     [other (print `(eval-error ,(format "invalid subcommand: ~A" other)))]))
 
-(display (format "debug: eval-cmd: ~A ~%" (eval-subcommand cli-subcommand cli-opts)))
-
-(print (run-apply 'benis))
+(eval-subcommand cli-subcommand cli-opts)
 

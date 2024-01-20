@@ -1,4 +1,7 @@
 (module desmo-logs (run-logs)
-  (import scheme)
-  (define (run-logs opts) 'todo))
+  (import scheme
+          (chicken base))
+  (define (run-logs opts)
+    (print "TODO")
+    'todo))
 
