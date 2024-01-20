@@ -1,7 +1,11 @@
-(import (chicken process-context)
+(import scheme
+        (chicken base)
+        (chicken process-context)
         (chicken format)
         matchable
-        test)
+        test
+        desmo-apply
+        )
 
 (define should-run-inline-tests?
   (let ((v (get-environment-variable "INLINE_TESTS")))
@@ -12,24 +16,23 @@
   (syntax-rules ()
     ((_ expr ...)
      (if should-run-inline-tests?
-       (begin
-          expr ...)))))
+         (begin expr ...)))))
 
 ; CLI arg parser
 
-(define usage-string (format (string-append
-  "Usage: desmoctl [-f cfg-path] SUBCOMMAND~%~%"
-  "Subcommands:~%"
-  "    apply          Apply the cluster config~%"
-  "    status         Show cluster status~%"
-  "    logs           Show cluster logs~%"
-  "    help           Show this help text~%~%"
-  "Top-level flags:~%"
-  "    -f cfg-path    Path to the cluster config file (default: desmo.scm)")))
+(define usage-string
+  (format (string-append
+            "Usage: desmoctl [-f cfg-path] SUBCOMMAND~%~%"
+            "Subcommands:~%"
+            "    apply          Apply the cluster config~%"
+            "    status         Show cluster status~%"
+            "    logs           Show cluster logs~%"
+            "    help           Show this help text~%~%"
+            "Top-level flags:~%"
+            "    -f cfg-path    Path to the cluster config file (default: desmo.scm)")))
 
-(define initial-opts '(
-  (cfg-path "desmo.scm")
-))
+(define initial-opts
+  '((cfg-path "desmo.scm")))
 
 (define (is-flag-like? args)
   (let ([first-char (string-ref (car args) 0)])
@@ -37,47 +40,54 @@
 
 (inline-tests
   (test-group "is-flag-like?"
-    (test "returns true for valid list" #t (is-flag-like? '("-f" "desmo.scm")))
-    (test "returns false for invalid list" #f (is-flag-like? '("apply")))))
+              (test "returns true for valid list" #t (is-flag-like? '("-f" "desmo.scm")))
+              (test "returns false for invalid list" #f (is-flag-like? '("apply")))))
 
 ;;; Returns a list of parsed options and the remaining arguments.
 (define (parse-top-level-flags opts args)
   (match args
     [()
-      `(parse-ok ,opts '())]
+     `(parse-ok ,opts '())]
     [("-f" cfg-path . rest)
-      (parse-top-level-flags (cons `(cfg-path ,cfg-path) opts)
-                             rest)]
+     (parse-top-level-flags (cons `(cfg-path ,cfg-path) opts)
+                            rest)]
     [(? is-flag-like?)
-        `(parse-error ,usage-string)]
+     `(parse-error ,usage-string)]
     [_
-        `(parse-ok ,opts ,args)]))
+     `(parse-ok ,opts ,args)]))
 
 (inline-tests
   (test-group "parse-top-level-flags"
-    (test "returns parse-error for invalid flag" 'parse-error
-      (car (parse-top-level-flags initial-opts '("--invalid-flag"))))
-    (test "returns parse-ok for empty args" 'parse-ok
-      (car (parse-top-level-flags initial-opts '())))
-    (test "returns parse-ok for valid flag" 'parse-ok
-      (car (parse-top-level-flags initial-opts '("-f" "foobar.scm" "status"))))
-    (test "returns parse-ok for valid flag and subcommand" 'parse-ok
-      (car (parse-top-level-flags initial-opts '("-f" "desmo.scm" "apply"))))))
+              (test "returns parse-error for invalid flag" 'parse-error
+                    (car (parse-top-level-flags initial-opts '("--invalid-flag"))))
+              (test "returns parse-ok for empty args" 'parse-ok
+                    (car (parse-top-level-flags initial-opts '())))
+              (test "returns parse-ok for valid flag" 'parse-ok
+                    (car (parse-top-level-flags initial-opts '("-f" "foobar.scm" "status"))))
+              (test "returns parse-ok for valid flag and subcommand" 'parse-ok
+                    (car (parse-top-level-flags initial-opts '("-f" "desmo.scm" "apply"))))))
 
 (define (parse-subcommand args)
   (match args
     [("apply")
-      '(parse-ok cmd-apply ())]
+     '(parse-ok cmd-apply ())]
     [("status" . rest)
-      (print "TODO status subcommand")
-      (exit 0)]
+     (print "TODO status subcommand")
+     (exit 0)]
     [("logs" . rest)
-      (print "TODO logs subcommand")
-      (exit 0)]
+     (print "TODO logs subcommand")
+     (exit 0)]
     [("help" . rest)
-      (print usage-string)
-      (exit 0)]
+     (print usage-string)
+     (exit 0)]
     [_ `(parse-error ,usage-string)]))
+
+(inline-tests
+  (test-group "parse-subcommand"
+              (test "returns parse-error for invalid subcommand" 'parse-error
+                    (car (parse-subcommand '("invalid-subcommand"))))
+              (test "returns parse-ok for valid subcommand" 'parse-ok
+                    (car (parse-subcommand '("apply"))))))
 
 (define top-level-flags-parse-result (parse-top-level-flags initial-opts (command-line-arguments)))
 (cond
@@ -115,3 +125,6 @@
     [other (print `(eval-error ,(format "invalid subcommand: ~A" other)))]))
 
 (display (format "debug: eval-cmd: ~A ~%" (eval-subcommand cli-subcommand cli-opts)))
+
+(print (run-apply 'benis))
+
