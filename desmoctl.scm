@@ -2,23 +2,14 @@
         (chicken base)
         (chicken process-context)
         (chicken format)
+        (chicken pretty-print)
         matchable
         test
+        utils
         desmo-apply
         desmo-status
         desmo-logs
         )
-
-(define should-run-inline-tests?
-  (let ((v (get-environment-variable "INLINE_TESTS")))
-    (and (string? v)
-         (string=? v "1"))))
-
-(define-syntax inline-tests
-  (syntax-rules ()
-    ((_ expr ...)
-     (if should-run-inline-tests?
-         (begin expr ...)))))
 
 ; CLI arg parser
 
@@ -113,15 +104,23 @@
 ;; (print (format "debug: cli-subcommand: ~A" cli-subcommand))
 ;; (print (format "debug: cli-opts: ~A" cli-opts))
 
+; read in config
+
+(define cfg-content
+  (read (open-input-file (cadr (assoc 'cfg-path cli-opts)))))
+
+(print "debug: cfg-content")
+(pretty-print cfg-content)
+
 ; evaluate parsed command
 
-(define (eval-subcommand subcmd opts)
+(define (eval-subcommand subcmd cfg)
   (match subcmd
-    ['cmd-apply (run-apply opts)]
-    ['cmd-status (run-status opts)]
-    ['cmd-logs (run-logs opts)]
+    ['cmd-apply (run-apply cfg)]
+    ['cmd-status (run-status cfg)]
+    ['cmd-logs (run-logs cfg)]
     ['cmd-help (print usage-string) 'done]
     [other (print `(eval-error ,(format "invalid subcommand: ~A" other)))]))
 
-(eval-subcommand cli-subcommand cli-opts)
+(eval-subcommand cli-subcommand cfg-content)
 
