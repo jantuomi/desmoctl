@@ -1,14 +1,15 @@
-(module utils (inline-tests)
-  (import scheme
-          (chicken base)
-          (chicken process-context))
+(module utils (*should-run-inline-tests?* inline-tests)
+	(import (scheme)
+		(chicken process-context))
 
-  (define-syntax inline-tests
-    (syntax-rules ()
-      ((_ expr ...)
-       (let* ((v (get-environment-variable "INLINE_TESTS"))
-              (should-run-inline-tests? (and (string? v)
-                                             (string=? v "1"))))
-         (if should-run-inline-tests?
-             (begin expr ...)))))))
+	(define *should-run-inline-tests?*
+	  (let ((v (get-environment-variable "INLINE_TESTS")))
+	    (and (string? v)
+		 (string=? v "1"))))
+
+	(define-syntax inline-tests
+	  (syntax-rules ()
+	    ((_ expr ...)
+	     (if *should-run-inline-tests?*
+		 (begin expr ...))))))
 

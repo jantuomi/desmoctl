@@ -5,11 +5,12 @@
         (chicken pretty-print)
         matchable
         test
-        utils
+
+	utils
         desmo-apply
         desmo-status
         desmo-logs
-        )
+	)
 
 ; CLI arg parser
 
@@ -59,6 +60,8 @@
                     (car (parse-top-level-flags initial-opts '("-f" "foobar.scm" "status"))))
               (test "returns parse-ok for valid flag and subcommand" 'parse-ok
                     (car (parse-top-level-flags initial-opts '("-f" "desmo.scm" "apply"))))))
+
+
 
 (define (parse-subcommand args)
   (match args
