@@ -6,10 +6,17 @@ A tool for controlling a desmofylakas cluster written in Chicken Scheme.
 
 Install [Chicken Scheme](https://wiki.call-cc.org/platforms).
 
+Install dependencies:
+
+    chicken-install -from-list requirements.list
+
+## Building and running
+
 Run the tool in the interpreter:
 
-    INLINE_TESTS=1 csi -s run.scm  # with tests
-    csi -s run.scm                 # without tests
+    # Set DEBUG=1 to show debug prints
+    # Set INLINE_TESTS=1 to run unit tests before execution
+    csi -s run.scm
 
 Compile a statically linked binary for production:
 

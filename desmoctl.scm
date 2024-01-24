@@ -4,8 +4,14 @@
         (chicken format)
         (chicken pretty-print)
 	(chicken condition)
+	(chicken port)
+	(chicken io)
+	medea
         matchable
         test
+	http-client
+	intarweb
+	uri-common
         )
 
 ;;;;;;;;;;;;;;;
@@ -17,11 +23,21 @@
     (and (string? v)
 	 (string=? v "1"))))
 
+(define *debug?*
+  (let ((v (get-environment-variable "DEBUG")))
+    (and (string? v)
+	 (string=? v "1"))))
+
 (define-syntax inline-tests
   (syntax-rules ()
     ((_ expr ...)
      (if *should-run-inline-tests?*
 	 (begin expr ...)))))
+
+(define (debug-print text)
+  (if *debug?*
+      (print "debug: " text)
+      (void)))
 
 (define (try-catch catcher fn)
   "Tries (fn) and calls (catcher exn) if fn throws"
@@ -31,11 +47,17 @@
   `((user-cfg-path
      ,(string-append (get-environment-variable "HOME") "/" ".desmorc"))
     (mgmt-api-url
-     "http://localhost:9939")))
+     "http://localhost:9939")
+    (mgmt-api-key "")))
 
 (define (is-flag-like? args)
   (let ([first-char (string-ref (car args) 0)])
     (eq? #\- first-char)))
+
+(inline-tests
+ (test-group "is-flag-like?"
+   (test "returns true for valid list" #t (is-flag-like? '("-c" "desmo.scm")))
+   (test "returns false for invalid list" #f (is-flag-like? '("apply")))))
 
 (define (assert-parse-or-exit result)
   (if (eq? (car result) 'parse-error)
@@ -43,10 +65,130 @@
 	     (exit 1))
       #f))
 
+(define (to-json-string datum)
+  (with-output-to-string (lambda () (write-json datum))))
+
+(define (from-json-string json)
+  (read-json json))
+
 (inline-tests
- (test-group "is-flag-like?"
-   (test "returns true for valid list" #t (is-flag-like? '("-c" "desmo.scm")))
-   (test "returns false for invalid list" #f (is-flag-like? '("apply")))))
+ (test-group "to-json-string"
+   (test "transforms alist to json object" "{\"a\":123}"
+	 (to-json-string '((a . 123))))
+   (test "transforms vector to json array" "[1,2,3]"
+	 (to-json-string #(1 2 3)))
+   (test "transforms bool to json bool" "true"
+	 (to-json-string #t)))
+ (test-group "from-json-string"
+   (test "transforms json object to alist" '((a . 123))
+	 (from-json-string "{\"a\":123}"))
+   (test "transforms json array to vector" #(1 2 3)
+	 (from-json-string "[1,2,3]"))
+   (test "transforms json bool to bool" #(#t)
+	 (from-json-string "[true]"))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Parse & eval "apply" subcommand ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define apply-usage-string
+  (format (string-append
+           "Usage: desmoctl apply [-f path] SUBCOMMAND~%"
+           "~%"
+           "Apply the config at PATH.~%"
+	   "~%"
+	   "Subcommands:~%"
+	   "    help           Show this help text"
+           )))
+
+(define (parse-apply-flags args)
+  (match args
+    [("-f" path)
+     `(parse-ok ((apply-config-path ,path)))]
+    [("help")
+     `(parse-ok subcmd-apply-help)]
+    [_
+     `(parse-error ,apply-usage-string)]))
+
+(inline-tests
+ (test-group "parse-apply-flags"
+   (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
+         (car (parse-apply-flags '("-f"  "some-path"))))
+   (test "returns parse-ok for valid args (help)" 'parse-ok
+         (car (parse-apply-flags '("help"))))
+   (test "returns parse-error for invalid args" 'parse-error
+	 (car (parse-apply-flags '("foo" "bar"))))
+   (test "returns parse-error for empty args" 'parse-error
+	 (car (parse-apply-flags '())))))
+
+(define (parse-subcommand-apply args)
+  (match (parse-apply-flags args)
+    [('parse-ok 'subcmd-apply-help)
+     `(parse-ok subcmd-apply-help ())]
+    [('parse-ok . rest)
+     `(parse-ok subcmd-apply ,(car rest))]
+    [other
+     other]))
+
+(inline-tests
+ (test-group "parse-subcommand-apply"
+   (test "returns parse-ok for help command" '(parse-ok subcmd-apply-help ())
+	 (parse-subcommand-apply '("help")))
+   (test "returns parse-ok for -f foo.txt" '(parse-ok subcmd-apply ((apply-config-path "foo.txt")))
+	 (parse-subcommand-apply '("-f" "foo.txt")))))
+
+(define (mock-post-fn . rest)
+  (print (format "mock-post-fn called with: ~A" rest))
+  rest)
+
+(define (post-fn url api-key json)
+  (with-input-from-request
+   (make-request method: 'POST
+                 uri: (uri-reference url)
+		 headers: (headers `((x-api-key ,api-key))))
+   json read-string))
+
+(define (post-prison post-fn cfg prison-json)
+  (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
+	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
+	 (req-url (string-append api-url "/prisons")))
+    (post-fn req-url api-key prison-json)))
+
+(define (run-apply cfg)
+  (define apply-config-content
+    (let* ((path (cadr (assoc 'apply-config-path cfg)))
+	   (catcher (lambda (e)
+		      (print (format "Error: no user config found at ~A" path))
+		      (exit 1)))
+	   (open-apply-cfg (lambda () (read (open-input-file path)))))
+      (try-catch catcher open-apply-cfg)))
+
+  (if *debug?*
+      (begin 
+	(debug-print "apply cfg:")
+	(pretty-print apply-config-content)))
+
+  (define apply-lst (vector->list apply-config-content))
+
+  (print (format "Applying all defined prisons (~A)..." (length apply-lst)))
+  
+  (define (apply-prison prison)
+    (print (format "Applying prison \"~A\"..." (cdr (assoc 'name prison))))
+    
+    (define apply-json (to-json-string prison))
+    
+    (debug-print "apply json:")
+    (debug-print apply-json)
+
+    (define api-response
+      (post-prison post-fn cfg apply-json))
+
+    (debug-print "api-response:")
+    (debug-print (format "~A" api-response)))
+
+  (for-each apply-prison apply-lst)
+
+  (print "Apply complete"))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse flags and subcommand ;;
@@ -119,7 +261,7 @@
    (test "returns parse-error for invalid subcommand" 'parse-error
          (car (parse-subcommand '("invalid-subcommand"))))
    (test "returns parse-ok for valid subcommand" 'parse-ok
-         (car (parse-subcommand '("apply" "foo.conf"))))))
+         (car (parse-subcommand '("apply" "-f" "foo.conf"))))))
 
 ;; Evaluate subcommand
 
@@ -136,70 +278,6 @@
      (print apply-usage-string) 'done]
     [other
      (print `(eval-error ,(format "invalid subcommand: ~A" other)))]))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Parse & eval "apply" subcommand ;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define apply-usage-string
-  (format (string-append
-           "Usage: desmoctl apply [-f path] SUBCOMMAND~%"
-           "~%"
-           "Apply the config at PATH.~%"
-	   "~%"
-	   "Subcommands:~%"
-	   "    help           Show this help text"
-           )))
-
-(define (parse-apply-flags args)
-  (match args
-    [("-f" path)
-     `(parse-ok ((apply-config-path ,path)))]
-    [("help")
-     `(parse-ok subcmd-apply-help)]
-    [_
-     `(parse-error ,apply-usage-string)]))
-
-(inline-tests
- (test-group "parse-apply-flags"
-   (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
-         (car (parse-apply-flags '("-f"  "some-path"))))
-   (test "returns parse-ok for valid args (help)" 'parse-ok
-         (car (parse-apply-flags '("help"))))
-   (test "returns parse-error for invalid args" 'parse-error
-	 (car (parse-apply-flags '("foo" "bar"))))
-   (test "returns parse-error for empty args" 'parse-error
-	 (car (parse-apply-flags '())))))
-
-(define (parse-subcommand-apply args)
-  (match (parse-apply-flags args)
-    [('parse-ok 'subcmd-apply-help)
-     `(parse-ok subcmd-apply-help ())]
-    [('parse-ok . rest)
-     `(parse-ok subcmd-apply ,(car rest))]
-    [other
-     other]))
-
-(inline-tests
- (test-group "parse-subcommand-apply"
-   (test "returns parse-ok for help command" '(parse-ok subcmd-apply-help ())
-	 (parse-subcommand-apply '("help")))
-   (test "returns parse-ok for -f foo.txt" '(parse-ok subcmd-apply ((apply-config-path "foo.txt")))
-	 (parse-subcommand-apply '("-f" "foo.txt")))))
-
-(define (run-apply cfg)
-  (define apply-config-content
-    (let* ((path (cadr (assoc 'apply-config-path cfg)))
-	   (catcher (lambda (e)
-		      (print (format "Error: no user config found at ~A" path))
-		      (exit 1)))
-	   (open-apply-cfg (lambda () (read (open-input-file path)))))
-      (try-catch catcher open-apply-cfg)))
-
-  (print "apply cfg:")
-  (pretty-print apply-config-content)
-
-  (print "TODO run-apply"))
 
 ;;;;;;;;;;;;;;;;;
 ;; Run the CLI ;;
@@ -223,8 +301,10 @@
 	   (open-user-cfg (lambda () (read (open-input-file path)))))
       (try-catch catcher open-user-cfg)))
 
-  (print "debug: user-cfg")
-  (pretty-print user-cfg)
+  (if *debug?*
+      (begin
+	(debug-print "user-cfg:")
+	(pretty-print user-cfg)))
 
   (define subcommand-parse-result
     (parse-subcommand (caddr top-level-flags-parse-result)))
@@ -236,18 +316,24 @@
   (define subcommand-cfg
     (caddr subcommand-parse-result))
 
-  (print "debug: subcommand-cfg")
-  (pretty-print subcommand-cfg)
+  (if *debug?*
+      (begin 
+	(debug-print "subcommand-cfg:")
+	(pretty-print subcommand-cfg)))
 
   (define cfg (append subcommand-cfg
 		      user-cfg
 		      default-cfg))
 
-  (print "debug: cfg")
-  (pretty-print cfg)
+  (if *debug?*
+      (begin
+	(debug-print "cfg:")
+	(pretty-print cfg)))
 
   (eval-subcommand subcommand cfg))
 
+;; When compiled, run the CLI when executable is run
+;; Interpreter should load ./run.scm
 (cond-expand
   (compiling (run-desmoctl))
   (else))
