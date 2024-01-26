@@ -6,6 +6,7 @@
 	(chicken condition)
 	(chicken port)
 	(chicken io)
+	srfi-13
 	medea
         matchable
         test
@@ -137,6 +138,10 @@
    (test "returns parse-ok for -f foo.txt" '(parse-ok subcmd-apply ((apply-config-path "foo.txt")))
 	 (parse-subcommand-apply '("-f" "foo.txt")))))
 
+;;;;;;;;;;;;;;;;;
+;; API adapter ;;
+;;;;;;;;;;;;;;;;;
+
 (define (mock-post-fn . rest)
   (print (format "mock-post-fn called with: ~A" rest))
   rest)
@@ -148,11 +153,28 @@
 		 headers: (headers `((x-api-key ,api-key))))
    json read-string))
 
+(define (mock-get-fn . rest)
+  (print (format "mock-get-fn called with: ~A" rest))
+  rest)
+
+(define (get-fn url api-key)
+  (with-input-from-request
+   (make-request method: 'GET
+		 uri: (uri-reference url)
+		 headers: (headers `((x-api-key ,api-key))))
+   #f read-string))
+
 (define (post-prison post-fn cfg prison-json)
   (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
 	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
 	 (req-url (string-append api-url "/prisons")))
     (post-fn req-url api-key prison-json)))
+
+(define (get-prisons get-fn cfg)
+  (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
+	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
+	 (req-url (string-append api-url "/prisons")))
+    (get-fn req-url api-key)))
 
 (define (run-apply cfg)
   (define apply-config-content
@@ -189,6 +211,46 @@
   (for-each apply-prison apply-lst)
 
   (print "Apply complete"))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Parse and eval "status" subcommand ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define (alist-keys alist)
+  (map (lambda (elem) (symbol->string (car elem))) alist))
+
+(define (string-repeat s n)
+  (if (<= n 0)
+      ""
+      (string-append s (repeat-string s (- n 1)))))
+
+(define (pretty-print-alists alists)
+  (define (pp alist)
+    (define (pp-pair pair)
+      (print (format "~A: ~A" (symbol->string (car pair)) (cdr pair))))
+
+    (print "")
+    (for-each pp-pair alist))
+
+  (if (null? alists)
+      "No data"
+      (for-each pp alists))
+  )
+
+(define (run-status cfg)
+  (print "Fetching status of all prisons...")
+
+  (define api-response
+    (get-prisons get-fn cfg))
+
+  (define prisons (vector->list (from-json-string api-response)))
+
+  (define (debug-print-prison prison)
+    ;; TODO improve this
+    (debug-print (format "~a" prison)))
+  
+  (for-each debug-print-prison prisons)
+  (pretty-print-alists prisons))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse flags and subcommand ;;
@@ -268,8 +330,7 @@
 (define (eval-subcommand subcmd cfg)
   (match subcmd
     ['subcmd-apply (run-apply cfg)]
-    ['subcmd-status (print "TODO status")
-		    (exit 1)]
+    ['subcmd-status (run-status cfg)]
     ['subcmd-logs (print "TODO logs")
 		  (exit 1)]
     ['subcmd-help
