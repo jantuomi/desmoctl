@@ -19,6 +19,9 @@
 ;; Utilities ;;
 ;;;;;;;;;;;;;;;
 
+(define (id x) x)
+(define nil '())
+
 (define *should-run-inline-tests?*
   (let ((v (get-environment-variable "INLINE_TESTS")))
     (and (string? v)
@@ -29,11 +32,18 @@
     (and (string? v)
 	 (string=? v "1"))))
 
+(define *cumulative-test-cases* '())
+
 (define-syntax inline-tests
   (syntax-rules ()
     ((_ expr ...)
      (if *should-run-inline-tests?*
-	 (begin expr ...)))))
+	 (set! *cumulative-test-cases* (append (quote (expr ...))
+					       *cumulative-test-cases*))))))
+
+(define (run-inline-tests)
+  (if *should-run-inline-tests?*
+      (test-group "desmoctl" (for-each eval *cumulative-test-cases*))))
 
 (define (debug-print text)
   (if *debug?*
@@ -41,8 +51,10 @@
       (void)))
 
 (define (try-catch catcher fn)
-  "Tries (fn) and calls (catcher exn) if fn throws"
-  (handle-exceptions exn (catcher exn) (fn)))
+  (call-with-current-continuation
+   (lambda (k)
+     (with-exception-handler (lambda (e) (k (catcher e)))
+       fn))))
 
 (define default-cfg
   `((user-cfg-path
@@ -73,7 +85,7 @@
 (define (string-repeat s n)
   (if (<= n 0)
       ""
-      (string-append s (repeat-string s (- n 1)))))
+      (string-append s (string-repeat s (- n 1)))))
 
 (define (pretty-print-alists alists)
   (define (pp alist)
@@ -85,31 +97,41 @@
 
   (if (null? alists)
       "No data"
-      (for-each pp alists))
-  )
+      (for-each pp alists)))
 
 (inline-tests
- (test-group "is-flag-like?"
-   (test "returns true for valid list" #t
-	 (is-flag-like?'("-c" "desmo.scm")))
-   (test "returns false for invalid list" #f
-	 (is-flag-like? '("apply"))))
- 
- (test-group "to-json-string"
-   (test "transforms alist to json object" "{\"a\":123}"
-	 (to-json-string '((a . 123))))
-   (test "transforms vector to json array" "[1,2,3]"
-	 (to-json-string #(1 2 3)))
-   (test "transforms bool to json bool" "true"
-	 (to-json-string #t)))
- 
- (test-group "from-json-string"
-   (test "transforms json object to alist" '((a . 123))
-	 (from-json-string "{\"a\":123}"))
-   (test "transforms json array to vector" #(1 2 3)
-	 (from-json-string "[1,2,3]"))
-   (test "transforms json bool to bool" #(#t)
-	 (from-json-string "[true]"))))
+ (test-group "utils"
+   (test-group "try-catch"
+     (test "returns fn return value when no exn thrown" 'done
+	   (try-catch (lambda (e) 'caught) (lambda () 'done)))
+     (test "returns catcher return value when exn thrown" 'caught
+	   (try-catch (lambda (e) 'caught) (lambda () (car '())))))
+   
+   (test-group "is-flag-like?"
+     (test "returns true for valid list" #t
+	   (is-flag-like?'("-c" "desmo.scm")))
+     (test "returns false for invalid list" #f
+	   (is-flag-like? '("apply"))))
+   
+   (test-group "to-json-string"
+     (test "transforms alist to json object" "{\"a\":123}"
+	   (to-json-string '((a . 123))))
+     (test "transforms vector to json array" "[1,2,3]"
+	   (to-json-string #(1 2 3)))
+     (test "transforms bool to json bool" "true"
+	   (to-json-string #t)))
+   
+   (test-group "from-json-string"
+     (test "transforms json object to alist" '((a . 123))
+	   (from-json-string "{\"a\":123}"))
+     (test "transforms json array to vector" #(1 2 3)
+	   (from-json-string "[1,2,3]"))
+     (test "transforms json bool to bool" #(#t)
+	   (from-json-string "[true]")))
+
+   (test-group "string-repeat"
+     (test "should return repeated string" "foofoofoo"
+	   (string-repeat "foo" 3)))))
 
 ;;;;;;;;;;;;;;;;;
 ;; API adapter ;;
@@ -150,16 +172,17 @@
     (get-fn req-url api-key)))
 
 (inline-tests
- (test-group "get-prisons"
-   (test "should create correct query" '("http://example.com/prisons" "bar")
-	 (get-prisons mock-get-fn
-		      '((mgmt-api-url "http://example.com") (mgmt-api-key "bar")))))
- 
- (test-group "post-prison"
-   (test "should create correct query" '("http://example.com/prisons" "bar" "{\"a\":\"b\"}")
-	 (post-prison mock-post-fn
-		      '((mgmt-api-url "http://example.com") (mgmt-api-key "bar"))
-		      "{\"a\":\"b\"}"))))
+ (test-group "API adapter"
+   (test-group "get-prisons"
+     (test "should create correct query" '("http://example.com/prisons" "bar")
+	   (get-prisons mock-get-fn
+			'((mgmt-api-url "http://example.com") (mgmt-api-key "bar")))))
+   
+   (test-group "post-prison"
+     (test "should create correct query" '("http://example.com/prisons" "bar" "{\"a\":\"b\"}")
+	   (post-prison mock-post-fn
+			'((mgmt-api-url "http://example.com") (mgmt-api-key "bar"))
+			"{\"a\":\"b\"}")))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse & eval "apply" subcommand ;;
@@ -175,17 +198,25 @@
 	   "    help           Show this help text"
            )))
 
-(define (parse-apply-flags args)
+(define (parse-apply-flags opts args)
+  "Returns an alist of opts"
   (match args
-    [("-f" path)
-     `(parse-ok ((apply-config-path ,path)))]
+    [()
+     (if (null? opts)
+	 `(parse-error ,apply-usage-string)
+	 `(parse-ok ,opts))]
+    [("-f" path . rest)
+     (parse-apply-flags (cons `(apply-config-path ,path) opts)
+			rest)]
+    [(? is-flag-like?)
+     `(parse-error ,apply-usage-string)]
     [("help")
      `(parse-ok subcmd-apply-help)]
     [_
      `(parse-error ,apply-usage-string)]))
 
 (define (parse-subcommand-apply args)
-  (match (parse-apply-flags args)
+  (match (parse-apply-flags '() args)
     [('parse-ok 'subcmd-apply-help)
      `(parse-ok subcmd-apply-help ())]
     [('parse-ok . rest)
@@ -194,21 +225,22 @@
      other]))
 
 (inline-tests
- (test-group "parse-apply-flags"
-   (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
-         (car (parse-apply-flags '("-f"  "some-path"))))
-   (test "returns parse-ok for valid args (help)" 'parse-ok
-         (car (parse-apply-flags '("help"))))
-   (test "returns parse-error for invalid args" 'parse-error
-	 (car (parse-apply-flags '("foo" "bar"))))
-   (test "returns parse-error for empty args" 'parse-error
-	 (car (parse-apply-flags '()))))
- 
- (test-group "parse-subcommand-apply"
-   (test "returns parse-ok for help command" '(parse-ok subcmd-apply-help ())
-	 (parse-subcommand-apply '("help")))
-   (test "returns parse-ok for -f foo.txt" '(parse-ok subcmd-apply ((apply-config-path "foo.txt")))
-	 (parse-subcommand-apply '("-f" "foo.txt")))))
+ (test-group "apply" 
+   (test-group "parse-apply-flags"
+     (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
+           (car (parse-apply-flags '() '("-f"  "some-path"))))
+     (test "returns parse-ok for valid args (help)" 'parse-ok
+           (car (parse-apply-flags '() '("help"))))
+     (test "returns parse-error for invalid args" 'parse-error
+	   (car (parse-apply-flags '() '("foo" "bar"))))
+     (test "returns parse-error for empty args" 'parse-error
+	   (car (parse-apply-flags '() '()))))
+   
+   (test-group "parse-subcommand-apply"
+     (test "returns parse-ok for help command" '(parse-ok subcmd-apply-help ())
+	   (parse-subcommand-apply '("help")))
+     (test "returns parse-ok for -f foo.txt" '(parse-ok subcmd-apply ((apply-config-path "foo.txt")))
+	   (parse-subcommand-apply '("-f" "foo.txt"))))))
 
 (define (run-apply cfg)
   (define apply-config-content
@@ -259,10 +291,10 @@
   (define prisons (vector->list (from-json-string api-response)))
 
   (define (debug-print-prison prison)
-    ;; TODO improve this
     (debug-print (format "~a" prison)))
   
   (for-each debug-print-prison prisons)
+
   (pretty-print-alists prisons))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -288,7 +320,6 @@
            "~%"
            "Run \"desmoctl SUBCOMMAND help\" to see help for a subcommand."
            )))
-
 
 (define (parse-top-level-flags opts args)
   "Returns a list of parsed options and the remaining arguments."
@@ -321,21 +352,22 @@
      `(parse-error ,usage-string)]))
 
 (inline-tests
- (test-group "parse-top-level-flags"
-   (test "returns parse-error for invalid flag" 'parse-error
-         (car (parse-top-level-flags default-cfg '("--invalid-flag"))))
-   (test "returns parse-ok for empty args" 'parse-ok
-         (car (parse-top-level-flags default-cfg '())))
-   (test "returns parse-ok for valid flag" 'parse-ok
-         (car (parse-top-level-flags default-cfg '("-c" "foobar.scm" "status"))))
-   (test "returns parse-ok for valid flag and subcommand" 'parse-ok
-         (car (parse-top-level-flags default-cfg '("-c" "desmo.scm" "apply")))))
- 
- (test-group "parse-subcommand"
-   (test "returns parse-error for invalid subcommand" 'parse-error
-         (car (parse-subcommand '("invalid-subcommand"))))
-   (test "returns parse-ok for valid subcommand" 'parse-ok
-         (car (parse-subcommand '("apply" "-f" "foo.conf"))))))
+ (test-group "top level parser"
+   (test-group "parse-top-level-flags"
+     (test "returns parse-error for invalid flag" 'parse-error
+           (car (parse-top-level-flags default-cfg '("--invalid-flag"))))
+     (test "returns parse-ok for empty args" 'parse-ok
+           (car (parse-top-level-flags default-cfg '())))
+     (test "returns parse-ok for valid flag" 'parse-ok
+           (car (parse-top-level-flags default-cfg '("-c" "foobar.scm" "status"))))
+     (test "returns parse-ok for valid flag and subcommand" 'parse-ok
+           (car (parse-top-level-flags default-cfg '("-c" "desmo.scm" "apply")))))
+   
+   (test-group "parse-subcommand"
+     (test "returns parse-error for invalid subcommand" 'parse-error
+           (car (parse-subcommand '("invalid-subcommand"))))
+     (test "returns parse-ok for valid subcommand" 'parse-ok
+           (car (parse-subcommand '("apply" "-f" "foo.conf")))))))
 
 ;; Evaluate subcommand
 
@@ -404,6 +436,8 @@
 	(pretty-print cfg)))
 
   (eval-subcommand subcommand cfg))
+
+(run-inline-tests)
 
 ;; When compiled, run the CLI when executable is run
 ;; Interpreter should load ./run.scm
