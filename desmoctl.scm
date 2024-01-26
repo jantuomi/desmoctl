@@ -55,11 +55,6 @@
   (let ([first-char (string-ref (car args) 0)])
     (eq? #\- first-char)))
 
-(inline-tests
- (test-group "is-flag-like?"
-   (test "returns true for valid list" #t (is-flag-like? '("-c" "desmo.scm")))
-   (test "returns false for invalid list" #f (is-flag-like? '("apply")))))
-
 (define (assert-parse-or-exit result)
   (if (eq? (car result) 'parse-error)
       (begin (print (cadr result))
@@ -72,7 +67,34 @@
 (define (from-json-string json)
   (read-json json))
 
+(define (alist-keys alist)
+  (map (lambda (elem) (symbol->string (car elem))) alist))
+
+(define (string-repeat s n)
+  (if (<= n 0)
+      ""
+      (string-append s (repeat-string s (- n 1)))))
+
+(define (pretty-print-alists alists)
+  (define (pp alist)
+    (define (pp-pair pair)
+      (print (format "~A: ~A" (symbol->string (car pair)) (cdr pair))))
+
+    (print "")
+    (for-each pp-pair alist))
+
+  (if (null? alists)
+      "No data"
+      (for-each pp alists))
+  )
+
 (inline-tests
+ (test-group "is-flag-like?"
+   (test "returns true for valid list" #t
+	 (is-flag-like?'("-c" "desmo.scm")))
+   (test "returns false for invalid list" #f
+	 (is-flag-like? '("apply"))))
+ 
  (test-group "to-json-string"
    (test "transforms alist to json object" "{\"a\":123}"
 	 (to-json-string '((a . 123))))
@@ -80,6 +102,7 @@
 	 (to-json-string #(1 2 3)))
    (test "transforms bool to json bool" "true"
 	 (to-json-string #t)))
+ 
  (test-group "from-json-string"
    (test "transforms json object to alist" '((a . 123))
 	 (from-json-string "{\"a\":123}"))
@@ -87,6 +110,56 @@
 	 (from-json-string "[1,2,3]"))
    (test "transforms json bool to bool" #(#t)
 	 (from-json-string "[true]"))))
+
+;;;;;;;;;;;;;;;;;
+;; API adapter ;;
+;;;;;;;;;;;;;;;;;
+
+(define (mock-post-fn . rest)
+  ;; (print (format "~%mock-post-fn called with: ~A" rest))
+  rest)
+
+(define (post-fn url api-key json)
+  (with-input-from-request
+   (make-request method: 'POST
+                 uri: (uri-reference url)
+		 headers: (headers `((x-api-key ,api-key))))
+   json read-string))
+
+(define (mock-get-fn . rest)
+  ;; (print (format "~%mock-get-fn called with: ~A" rest))
+  rest)
+
+(define (get-fn url api-key)
+  (with-input-from-request
+   (make-request method: 'GET
+		 uri: (uri-reference url)
+		 headers: (headers `((x-api-key ,api-key))))
+   #f read-string))
+
+(define (post-prison post-fn cfg prison-json)
+  (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
+	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
+	 (req-url (string-append api-url "/prisons")))
+    (post-fn req-url api-key prison-json)))
+
+(define (get-prisons get-fn cfg)
+  (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
+	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
+	 (req-url (string-append api-url "/prisons")))
+    (get-fn req-url api-key)))
+
+(inline-tests
+ (test-group "get-prisons"
+   (test "should create correct query" '("http://example.com/prisons" "bar")
+	 (get-prisons mock-get-fn
+		      '((mgmt-api-url "http://example.com") (mgmt-api-key "bar")))))
+ 
+ (test-group "post-prison"
+   (test "should create correct query" '("http://example.com/prisons" "bar" "{\"a\":\"b\"}")
+	 (post-prison mock-post-fn
+		      '((mgmt-api-url "http://example.com") (mgmt-api-key "bar"))
+		      "{\"a\":\"b\"}"))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse & eval "apply" subcommand ;;
@@ -111,17 +184,6 @@
     [_
      `(parse-error ,apply-usage-string)]))
 
-(inline-tests
- (test-group "parse-apply-flags"
-   (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
-         (car (parse-apply-flags '("-f"  "some-path"))))
-   (test "returns parse-ok for valid args (help)" 'parse-ok
-         (car (parse-apply-flags '("help"))))
-   (test "returns parse-error for invalid args" 'parse-error
-	 (car (parse-apply-flags '("foo" "bar"))))
-   (test "returns parse-error for empty args" 'parse-error
-	 (car (parse-apply-flags '())))))
-
 (define (parse-subcommand-apply args)
   (match (parse-apply-flags args)
     [('parse-ok 'subcmd-apply-help)
@@ -132,49 +194,21 @@
      other]))
 
 (inline-tests
+ (test-group "parse-apply-flags"
+   (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
+         (car (parse-apply-flags '("-f"  "some-path"))))
+   (test "returns parse-ok for valid args (help)" 'parse-ok
+         (car (parse-apply-flags '("help"))))
+   (test "returns parse-error for invalid args" 'parse-error
+	 (car (parse-apply-flags '("foo" "bar"))))
+   (test "returns parse-error for empty args" 'parse-error
+	 (car (parse-apply-flags '()))))
+ 
  (test-group "parse-subcommand-apply"
    (test "returns parse-ok for help command" '(parse-ok subcmd-apply-help ())
 	 (parse-subcommand-apply '("help")))
    (test "returns parse-ok for -f foo.txt" '(parse-ok subcmd-apply ((apply-config-path "foo.txt")))
 	 (parse-subcommand-apply '("-f" "foo.txt")))))
-
-;;;;;;;;;;;;;;;;;
-;; API adapter ;;
-;;;;;;;;;;;;;;;;;
-
-(define (mock-post-fn . rest)
-  (print (format "mock-post-fn called with: ~A" rest))
-  rest)
-
-(define (post-fn url api-key json)
-  (with-input-from-request
-   (make-request method: 'POST
-                 uri: (uri-reference url)
-		 headers: (headers `((x-api-key ,api-key))))
-   json read-string))
-
-(define (mock-get-fn . rest)
-  (print (format "mock-get-fn called with: ~A" rest))
-  rest)
-
-(define (get-fn url api-key)
-  (with-input-from-request
-   (make-request method: 'GET
-		 uri: (uri-reference url)
-		 headers: (headers `((x-api-key ,api-key))))
-   #f read-string))
-
-(define (post-prison post-fn cfg prison-json)
-  (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
-	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
-	 (req-url (string-append api-url "/prisons")))
-    (post-fn req-url api-key prison-json)))
-
-(define (get-prisons get-fn cfg)
-  (let* ((api-url (cadr (assoc 'mgmt-api-url cfg)))
-	 (api-key (cadr (assoc 'mgmt-api-key cfg)))
-	 (req-url (string-append api-url "/prisons")))
-    (get-fn req-url api-key)))
 
 (define (run-apply cfg)
   (define apply-config-content
@@ -215,27 +249,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse and eval "status" subcommand ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (alist-keys alist)
-  (map (lambda (elem) (symbol->string (car elem))) alist))
-
-(define (string-repeat s n)
-  (if (<= n 0)
-      ""
-      (string-append s (repeat-string s (- n 1)))))
-
-(define (pretty-print-alists alists)
-  (define (pp alist)
-    (define (pp-pair pair)
-      (print (format "~A: ~A" (symbol->string (car pair)) (cdr pair))))
-
-    (print "")
-    (for-each pp-pair alist))
-
-  (if (null? alists)
-      "No data"
-      (for-each pp alists))
-  )
 
 (define (run-status cfg)
   (print "Fetching status of all prisons...")
@@ -290,17 +303,6 @@
     [_
      `(parse-ok ,opts ,args)]))
 
-(inline-tests
- (test-group "parse-top-level-flags"
-   (test "returns parse-error for invalid flag" 'parse-error
-         (car (parse-top-level-flags default-cfg '("--invalid-flag"))))
-   (test "returns parse-ok for empty args" 'parse-ok
-         (car (parse-top-level-flags default-cfg '())))
-   (test "returns parse-ok for valid flag" 'parse-ok
-         (car (parse-top-level-flags default-cfg '("-c" "foobar.scm" "status"))))
-   (test "returns parse-ok for valid flag and subcommand" 'parse-ok
-         (car (parse-top-level-flags default-cfg '("-c" "desmo.scm" "apply"))))))
-
 (define (parse-subcommand args)
   (match args
     [("build")
@@ -319,6 +321,16 @@
      `(parse-error ,usage-string)]))
 
 (inline-tests
+ (test-group "parse-top-level-flags"
+   (test "returns parse-error for invalid flag" 'parse-error
+         (car (parse-top-level-flags default-cfg '("--invalid-flag"))))
+   (test "returns parse-ok for empty args" 'parse-ok
+         (car (parse-top-level-flags default-cfg '())))
+   (test "returns parse-ok for valid flag" 'parse-ok
+         (car (parse-top-level-flags default-cfg '("-c" "foobar.scm" "status"))))
+   (test "returns parse-ok for valid flag and subcommand" 'parse-ok
+         (car (parse-top-level-flags default-cfg '("-c" "desmo.scm" "apply")))))
+ 
  (test-group "parse-subcommand"
    (test "returns parse-error for invalid subcommand" 'parse-error
          (car (parse-subcommand '("invalid-subcommand"))))
