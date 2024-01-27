@@ -1,0 +1,7 @@
+(let ((replicas 9))
+
+  `#(((name . "foobar")
+      (base . "14.0-RELEASE-base")
+      (packages . #())
+      (commands . #())
+      (replicas . ,(+ 1 replicas)))))

@@ -10,6 +10,10 @@ Install dependencies:
 
     chicken-install -from-list requirements.list
 
+In addition to Chicken dependencies, you need to have these available in PATH:
+
+    tar
+
 ## Building and running
 
 Run the tool in the interpreter:

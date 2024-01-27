@@ -1,2 +1,2 @@
-((mgmt-api-url "http://localhost:9939")
- (mgmt-api-key "foobar"))
+((mgmt-api-url . "http://localhost:9939")
+ (mgmt-api-key . "foobar"))

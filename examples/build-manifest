@@ -1,0 +1,9 @@
+((packages
+  . #("nginx"))
+ (files
+  . #("nginx.conf"))
+ (build-commands
+  . #("sysrc nginx_enable=YES"))
+ (start-command
+  . "nginx -c nginx.conf"))
+
