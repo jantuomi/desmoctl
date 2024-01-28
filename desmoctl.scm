@@ -6,6 +6,7 @@
 	(chicken condition)
 	(chicken port)
 	(chicken io)
+	(chicken file)
 	srfi-13
 	medea
         matchable
@@ -297,7 +298,7 @@
       (try-catch catcher open-apply-cfg)))
 
   (define content (if (cdr (assoc 'apply-config-eval cfg))
-		      (eval content-raw)
+		      (eval content-raw (null-environment 5))
 		      content-raw))
 
   (if *debug?*
@@ -422,7 +423,7 @@
       (try-catch catcher open-build-manifest)))
 
   (define content (if (cdr (assoc 'build-manifest-eval cfg))
-		      (eval content-raw)
+		      (eval content-raw (null-environment 5))
 		      content-raw))
 
   (if *debug?*
@@ -435,15 +436,39 @@
 	  (vector->list (cdr pair))
 	  '())))
 
+  (define desmometa-path "__desmometa")
+
+  (create-directory desmometa-path)
+  
   (define manifest-json
     (to-json-string content))
+  (define manifest-scm
+    (format "~s" content))
 
   (debug-print (format "manifest-json: ~A" manifest-json))
+
+  (define meta-json-path
+    (string-append desmometa-path "/manifest.json"))
+  (define meta-scm-path
+    (string-append desmometa-path "/manifest.scm"))
+  (define meta-version-path
+    (string-append desmometa-path "/version"))
+
+  ;; https://stackoverflow.com/a/10441464
+  (define (write-to-a-file path txt)
+    (call-with-output-file path
+      (lambda (output-port)
+	(display txt output-port))
+      #:text))
+
+  (write-to-a-file meta-json-path manifest-json)
+  (write-to-a-file meta-scm-path manifest-scm)
+  (write-to-a-file meta-version-path "1")
 
   (define archive-path (cdr (assoc 'build-archive-path cfg)))
 
   (define tar-cmd
-    (apply string-append "2>&1 tar cvf " archive-path " " manifest-path " " files-list))
+    (apply string-append "2>&1 tar cvf " archive-path " " desmometa-path " " files-list))
 
   (debug-print "tar-cmd:")
   (debug-print tar-cmd)
@@ -455,7 +480,10 @@
   (match (car tar-output)
     ['shell-ok (print (format "Archive ~A built." archive-path))]
     [other (print (format "Failed to build archive ~A." archive-path))
-	   (exit 1)]))
+	   (exit 1)])
+
+  (delete-directory desmometa-path #t) ; recursive
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse flags and subcommand ;;
