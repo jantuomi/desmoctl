@@ -7,6 +7,8 @@
 	(chicken port)
 	(chicken io)
 	(chicken file)
+	(chicken file posix)
+	(chicken string)
 	srfi-13
 	medea
         matchable
@@ -15,6 +17,7 @@
 	intarweb
 	uri-common
 	shell
+	filepath
         )
 
 ;;;;;;;;;;;;;;;
@@ -67,7 +70,7 @@
 
 (define default-cfg
   `((user-cfg-path
-     . ,(string-append (get-environment-variable "HOME") "/" ".desmorc"))
+     . ,(filepath:combine (get-environment-variable "HOME") ".desmorc"))
     (mgmt-api-url
      . "http://localhost:9939")
     (mgmt-api-key
@@ -430,15 +433,34 @@
       (begin (debug-print "manifest content:")
 	     (pretty-print content)))
 
-  (define files-list
-    (let ((pair (assoc 'files content)))
-      (if pair
-	  (vector->list (cdr pair))
-	  '())))
+  (define filespec-list
+    (match (assoc 'files content)
+      [#f '()]
+      [pair (vector->list (cdr pair))]))
 
-  (define desmometa-path "__desmometa")
+  (define work-area-path "__desmowork")
+  (define desmometa-path (filepath:combine work-area-path "__desmometa"))
 
+  (create-directory work-area-path)
   (create-directory desmometa-path)
+
+  (define pwd (get-environment-variable "PWD"))
+  
+  (define (symlink-to-work-area filespec)
+    (match-let (((from to-jail-abs) (string-split filespec ":")))
+      (define to (string-append work-area-path to-jail-abs))
+      (define to-dir (filepath:take-directory to))
+      
+      (create-directory to-dir #t)
+
+      (define symlink-from (filepath:combine pwd from))
+      (define symlink-to (filepath:combine pwd to))
+
+      (debug-print (format "from: ~A" symlink-from))
+      (debug-print (format "to: ~A" symlink-to))
+      (create-symbolic-link symlink-from symlink-to)))
+  
+  (for-each symlink-to-work-area filespec-list)
   
   (define manifest-json
     (to-json-string content))
@@ -448,11 +470,11 @@
   (debug-print (format "manifest-json: ~A" manifest-json))
 
   (define meta-json-path
-    (string-append desmometa-path "/manifest.json"))
+    (filepath:combine desmometa-path "manifest.json"))
   (define meta-scm-path
-    (string-append desmometa-path "/manifest.scm"))
+    (filepath:combine desmometa-path "manifest.scm"))
   (define meta-version-path
-    (string-append desmometa-path "/version"))
+    (filepath:combine desmometa-path "version"))
 
   ;; https://stackoverflow.com/a/10441464
   (define (write-to-a-file path txt)
@@ -468,7 +490,7 @@
   (define archive-path (cdr (assoc 'build-archive-path cfg)))
 
   (define tar-cmd
-    (apply string-append "2>&1 tar cvf " archive-path " " desmometa-path " " files-list))
+    (format "2>&1 tar cvhf ~A -C ~A ." archive-path work-area-path))
 
   (debug-print "tar-cmd:")
   (debug-print tar-cmd)
@@ -482,8 +504,7 @@
     [other (print (format "Failed to build archive ~A." archive-path))
 	   (exit 1)])
 
-  (delete-directory desmometa-path #t) ; recursive
-  )
+  (delete-directory work-area-path #t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse flags and subcommand ;;

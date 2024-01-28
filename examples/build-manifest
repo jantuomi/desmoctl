@@ -1,7 +1,7 @@
 ((packages
   . #("nginx"))
  (files
-  . #("nginx.conf"))
+  . #("nginx.conf:/etc/nginx/nginx.conf"))
  (build-commands
   . #("sysrc nginx_enable=YES"))
  (start-command
