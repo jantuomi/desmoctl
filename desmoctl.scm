@@ -34,7 +34,7 @@
 (cond-expand
   ((not compiling)
    ;; when interpreted or loaded
-   
+
    (import (only test test-group test))
 
    (define *should-run-inline-tests?*
@@ -53,7 +53,7 @@
 
   (else
    ;; when compiled
-   
+
    (define-syntax inline-tests
      (syntax-rules ()
        ((_ expr ...)
@@ -181,6 +181,7 @@
    (test "failing command should return shell-err" 'shell-err
 	 (car (shell-command-capture "cmd-does-not-exist")))))
 
+
 ;;;;;;;;;;;;;;;;;
 ;; API adapter ;;
 ;;;;;;;;;;;;;;;;;
@@ -225,7 +226,7 @@
      (test "should create correct query" '("http://example.com/prisons" "bar")
 	   (get-prisons mock-get-fn
 			'((mgmt-api-url . "http://example.com") (mgmt-api-key . "bar")))))
-   
+
    (test-group "post-prison"
      (test "should create correct query" '("http://example.com/prisons" "bar" "{\"a\":\"b\"}")
 	   (post-prison mock-post-fn
@@ -284,7 +285,7 @@
      other]))
 
 (inline-tests
- (test-group "apply" 
+ (test-group "apply"
    (test-group "parse-apply-flags"
      (test "returns parse-ok for valid args (-f some-path)" 'parse-ok
            (car (parse-apply-flags '() '("-f"  "some-path"))))
@@ -294,7 +295,7 @@
 	   (car (parse-apply-flags '() '("foo" "bar"))))
      (test "returns parse-error for empty args" 'parse-error
 	   (car (parse-apply-flags '() '()))))
-   
+
    (test-group "parse-subcommand-apply"
      (test "returns parse-ok for help command"
 	   '(parse-ok subcmd-apply-help ())
@@ -324,12 +325,12 @@
   (define apply-lst (vector->list content))
 
   (print (format "Applying all defined prisons (~A)..." (length apply-lst)))
-  
+
   (define (apply-prison prison)
     (print (format "Applying prison \"~A\"..." (cdr (assoc 'name prison))))
-    
+
     (define apply-json (to-json-string prison))
-    
+
     (debug-print "apply json:" apply-json)
 
     (define api-response
@@ -355,7 +356,7 @@
 
   (define (debug-print-prison prison)
     (debug-print (format "~a" prison)))
-  
+
   (for-each debug-print-prison prisons)
 
   (pretty-print-alists prisons))
@@ -391,14 +392,12 @@
   "Returns an alist of opts"
   (match args
     [()
-     (if (null? opts)
-	 `(parse-error ,build-usage-string)
-	 `(parse-ok ,opts))]
+     `(parse-ok ,opts)]
     [("-f" path . rest)
      (parse-build-flags (cons `(build-manifest-path . ,path) opts)
 			rest)]
     [("-F" path . rest)
-     (parse-build-flags (append `((build-manifest-eval . ,path)
+     (parse-build-flags (append `((build-manifest-path . ,path)
 				  (build-manifest-eval . #t)) opts)
 			rest)]
     [("-o" path . rest)
@@ -411,6 +410,26 @@
     [_
      `(parse-error ,build-usage-string)]))
 
+(inline-tests
+ (test-group "parse-build-flags"
+   (test "returns defaults for empty input" `(parse-ok ,default-build-cfg)
+	 (parse-build-flags default-build-cfg '()))
+   (test "parses path when -f supplied" `(build-manifest-path . "manifest")
+	 (let ((result (parse-build-flags default-build-cfg '("-f" "manifest"))))
+	   (assoc 'build-manifest-path (cadr result))))
+   (test "parses path when -F supplied" `(build-manifest-path . "manifest")
+	 (let ((result (parse-build-flags default-build-cfg '("-F" "manifest"))))
+	   (assoc 'build-manifest-path (cadr result))))
+   (test "parses eval=true when -F supplied" `(build-manifest-eval . #t)
+	 (let ((result (parse-build-flags default-build-cfg '("-F" "manifest"))))
+	   (assoc 'build-manifest-eval (cadr result))))
+   (test "parses output path when -o supplied" `(build-archive-path . "outfile")
+	 (let ((result (parse-build-flags default-build-cfg '("-o" "outfile"))))
+	   (assoc 'build-archive-path (cadr result))))
+   (test "parses help command" `(parse-ok subcmd-build-help)
+	 (parse-build-flags default-build-cfg '("help")))
+   ))
+
 (define (parse-subcommand-build build-cfg args)
   (match (parse-build-flags build-cfg args)
     [('parse-ok 'subcmd-build-help)
@@ -421,99 +440,105 @@
      other]))
 
 (define (run-build cfg)
-  (print "Reading build manifest...")
+  (define (run-build*)
+    (print "Reading build manifest...")
 
-  (define manifest-path
-    (cdr (or (assoc 'build-manifest-path cfg)
-	     (begin (print "Error: no path to build manifest supplied")
-		    (exit 1)))))
-  
-  (define content-raw
-    (let* ((catcher (lambda (e)
-		      (print (format "Error: no build manifest found at ~A" manifest-path))
-		      (exit 1)))
-	   (open-build-manifest (lambda () (read (open-input-file manifest-path)))))
-      (try-catch catcher open-build-manifest)))
+    (define manifest-path
+      (cdr (or (assoc 'build-manifest-path cfg)
+	       (begin (print "Error: no path to build manifest supplied")
+		      (exit 1)))))
 
-  (define content (if (cdr (assoc 'build-manifest-eval cfg))
-		      (eval content-raw (null-environment 5))
-		      content-raw))
+    (define content-raw
+      (let* ((catcher (lambda (e)
+			(print (format "Error: no build manifest found at ~A" manifest-path))
+			(exit 1)))
+	     (open-build-manifest (lambda () (read (open-input-file manifest-path)))))
+	(try-catch catcher open-build-manifest)))
 
-  (if *debug?*
-      (begin (debug-print "manifest content:")
-	     (pretty-print content)))
+    (define content (if (cdr (assoc 'build-manifest-eval cfg))
+			(eval content-raw (null-environment 5))
+			content-raw))
 
-  (define filespec-list
-    (match (assoc 'files content)
-      [#f '()]
-      [pair (vector->list (cdr pair))]))
+    (if *debug?*
+	(begin (debug-print "manifest content:")
+	       (pretty-print content)))
 
-  (define work-area-path "__desmowork")
-  (define desmometa-path (filepath:combine work-area-path "__desmometa"))
+    (define filespec-list
+      (match (assoc 'files content)
+	[#f '()]
+	[pair (vector->list (cdr pair))]))
 
-  (create-directory work-area-path)
-  (create-directory desmometa-path)
+    (define work-area-path "__desmowork")
+    (define desmometa-path (filepath:combine work-area-path "__desmometa"))
 
-  (define pwd (get-environment-variable "PWD"))
-  
-  (define (symlink-to-work-area filespec)
-    (match-let (((from to-jail-abs) (string-split filespec ":")))
-      (define to (string-append work-area-path to-jail-abs))
-      (define to-dir (filepath:take-directory to))
-      
-      (create-directory to-dir #t)
+    (create-directory work-area-path)
+    (create-directory desmometa-path)
 
-      (define symlink-from (filepath:combine pwd from))
-      (define symlink-to (filepath:combine pwd to))
+    (define pwd (get-environment-variable "PWD"))
 
-      (debug-print "from:" symlink-from)
-      (debug-print "to:" symlink-to)
-      (create-symbolic-link symlink-from symlink-to)))
-  
-  (for-each symlink-to-work-area filespec-list)
-  
-  (define manifest-json
-    (to-json-string content))
-  (define manifest-scm
-    (format "~s" content))
+    (define (symlink-to-work-area filespec)
+      (match-let (((from to-jail-abs) (string-split filespec ":")))
+	(define to (string-append work-area-path to-jail-abs))
+	(define to-dir (filepath:take-directory to))
 
-  (debug-print "manifest-json:" manifest-json)
+	(create-directory to-dir #t)
 
-  (define meta-json-path
-    (filepath:combine desmometa-path "manifest.json"))
-  (define meta-scm-path
-    (filepath:combine desmometa-path "manifest.scm"))
-  (define meta-version-path
-    (filepath:combine desmometa-path "version"))
+	(define symlink-from (filepath:combine pwd from))
+	(define symlink-to (filepath:combine pwd to))
 
-  ;; https://stackoverflow.com/a/10441464
-  (define (write-to-a-file path txt)
-    (call-with-output-file path
-      (lambda (output-port)
-	(display txt output-port))
-      #:text))
+	(debug-print "from:" symlink-from)
+	(debug-print "to:" symlink-to)
+	(create-symbolic-link symlink-from symlink-to)))
 
-  (write-to-a-file meta-json-path manifest-json)
-  (write-to-a-file meta-scm-path manifest-scm)
-  (write-to-a-file meta-version-path "1")
+    (for-each symlink-to-work-area filespec-list)
 
-  (define archive-path (cdr (assoc 'build-archive-path cfg)))
+    (define manifest-json
+      (to-json-string content))
+    (define manifest-scm
+      (format "~s" content))
 
-  (define tar-cmd
-    (format "2>&1 tar cvhf ~A -C ~A ." archive-path work-area-path))
+    (debug-print "manifest-json:" manifest-json)
 
-  (debug-print "tar-cmd:" tar-cmd)
+    (define meta-json-path
+      (filepath:combine desmometa-path "manifest.json"))
+    (define meta-scm-path
+      (filepath:combine desmometa-path "manifest.scm"))
+    (define meta-version-path
+      (filepath:combine desmometa-path "version"))
 
-  (print (format "Building archive ~A..." archive-path))
+    ;; https://stackoverflow.com/a/10441464
+    (define (write-to-a-file path txt)
+      (call-with-output-file path
+	(lambda (output-port)
+	  (display txt output-port))
+	#:text))
 
-  (define tar-output (shell-command-capture tar-cmd))
+    (write-to-a-file meta-json-path manifest-json)
+    (write-to-a-file meta-scm-path manifest-scm)
+    (write-to-a-file meta-version-path "1")
 
-  (match (car tar-output)
-    ['shell-ok (print (format "Archive ~A built." archive-path))]
-    [other (print (format "Failed to build archive ~A." archive-path))
-	   (exit 1)])
+    (define archive-path (cdr (assoc 'build-archive-path cfg)))
 
-  (delete-directory work-area-path #t))
+    (define tar-cmd
+      (format "2>&1 tar cvhf ~A -C ~A ." archive-path work-area-path))
+
+    (debug-print "tar-cmd:" tar-cmd)
+
+    (print (format "Building archive ~A..." archive-path))
+
+    (define tar-output (shell-command-capture tar-cmd))
+
+    (match (car tar-output)
+      ['shell-ok (print (format "Archive ~A built." archive-path))]
+      [other (print (format "Failed to build archive ~A." archive-path))
+	     (exit 1)])
+
+    (delete-directory work-area-path #t))
+
+  (try-catch (lambda (e) (begin (print "Error: build failed")
+				(print-error-message e)
+				(exit 1)))
+	     run-build*))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse flags and subcommand ;;
@@ -552,6 +577,17 @@
     [_
      `(parse-ok ,opts ,args)]))
 
+(inline-tests
+ (test-group "parse-top-level-flags"
+   (test "returns parse-error for invalid flag" 'parse-error
+         (car (parse-top-level-flags default-cfg '("--invalid-flag"))))
+   (test "returns parse-ok for empty args" 'parse-ok
+         (car (parse-top-level-flags default-cfg '())))
+   (test "returns parse-ok for valid flag" 'parse-ok
+         (car (parse-top-level-flags default-cfg '("-c" "foobar.scm" "status"))))
+   (test "returns parse-ok for valid flag and subcommand" 'parse-ok
+         (car (parse-top-level-flags default-cfg '("-c" "desmo.scm" "apply"))))))
+
 (define (parse-subcommand args)
   (match args
     [("build" . rest)
@@ -570,22 +606,11 @@
      `(parse-error ,usage-string)]))
 
 (inline-tests
- (test-group "top level parser"
-   (test-group "parse-top-level-flags"
-     (test "returns parse-error for invalid flag" 'parse-error
-           (car (parse-top-level-flags default-cfg '("--invalid-flag"))))
-     (test "returns parse-ok for empty args" 'parse-ok
-           (car (parse-top-level-flags default-cfg '())))
-     (test "returns parse-ok for valid flag" 'parse-ok
-           (car (parse-top-level-flags default-cfg '("-c" "foobar.scm" "status"))))
-     (test "returns parse-ok for valid flag and subcommand" 'parse-ok
-           (car (parse-top-level-flags default-cfg '("-c" "desmo.scm" "apply")))))
-   
-   (test-group "parse-subcommand"
-     (test "returns parse-error for invalid subcommand" 'parse-error
-           (car (parse-subcommand '("invalid-subcommand"))))
-     (test "returns parse-ok for valid subcommand" 'parse-ok
-           (car (parse-subcommand '("apply" "-f" "foo.conf")))))))
+ (test-group "parse-subcommand"
+   (test "returns parse-error for invalid subcommand" 'parse-error
+         (car (parse-subcommand '("invalid-subcommand"))))
+   (test "returns parse-ok for valid subcommand" 'parse-ok
+         (car (parse-subcommand '("apply" "-f" "foo.conf"))))))
 
 ;; Evaluate subcommand
 
@@ -638,7 +663,7 @@
     (cadr subcommand-parse-result))
   (define subcommand-cfg
     (caddr subcommand-parse-result))
-  
+
   (debug-print "subcommand-cfg:" subcommand-cfg)
 
   (define cfg (append subcommand-cfg

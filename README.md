@@ -14,7 +14,7 @@ You also need to have these available in PATH:
 Install dependencies, build and install to your preferred location:
 
     make deps
-    make
+    make dynamic # or make static
     PREFIX=$HOME/.local/bin/ make install
 
 ## Usage
