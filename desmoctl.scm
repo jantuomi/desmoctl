@@ -1,23 +1,27 @@
-(import scheme
-        (chicken base)
-        (chicken process-context)
+(import (chicken base)
+        (only (chicken process-context)
+	      get-environment-variable
+	      command-line-arguments)
         (chicken format)
         (chicken pretty-print)
 	(chicken condition)
 	(chicken port)
 	(chicken io)
-	(chicken file)
-	(chicken file posix)
-	(chicken string)
-	srfi-13
-	medea
-        matchable
-        test
-	http-client
-	intarweb
-	uri-common
-	shell
-	filepath
+	(only (chicken file)
+	      create-directory
+	      delete-directory)
+	(only (chicken file posix)
+	      create-symbolic-link)
+	(only (chicken string)
+	      string-split)
+	matchable
+	openssl
+	(only medea read-json write-json)
+	(only http-client with-input-from-request)
+	(only intarweb make-request headers)
+	(only uri-common uri-reference)
+	(only shell capture)
+	(only filepath filepath:combine filepath:take-directory)
         )
 
 ;;;;;;;;;;;;;;;
@@ -27,33 +31,44 @@
 (define (id x) x)
 (define nil '())
 
-(define *should-run-inline-tests?*
-  (let ((v (get-environment-variable "INLINE_TESTS")))
-    (and (string? v)
-	 (string=? v "1"))))
+(cond-expand
+  ((not compiling)
+   ;; when interpreted or loaded
+   
+   (import (only test test-group test))
+
+   (define *should-run-inline-tests?*
+     (let ((v (get-environment-variable "INLINE_TESTS")))
+       (and (string? v)
+	    (string=? v "1"))))
+
+   (define *cumulative-test-cases* '())
+
+   (define-syntax inline-tests
+     (syntax-rules ()
+       ((_ expr ...)
+	(if *should-run-inline-tests?*
+	    (set! *cumulative-test-cases* (append (quote (expr ...))
+						  *cumulative-test-cases*)))))))
+
+  (else
+   ;; when compiled
+   
+   (define-syntax inline-tests
+     (syntax-rules ()
+       ((_ expr ...)
+	(void))))))
 
 (define *debug?*
   (let ((v (get-environment-variable "DEBUG")))
     (and (string? v)
 	 (string=? v "1"))))
 
-(define *cumulative-test-cases* '())
-
-(define-syntax inline-tests
-  (syntax-rules ()
-    ((_ expr ...)
-     (if *should-run-inline-tests?*
-	 (set! *cumulative-test-cases* (append (quote (expr ...))
-					       *cumulative-test-cases*))))))
-
-(define (run-inline-tests)
-  (if *should-run-inline-tests?*
-      (test-group "desmoctl" (for-each eval *cumulative-test-cases*))))
-
-(define (debug-print text)
-  (if *debug?*
-      (print "debug: " text)
-      (void)))
+(define debug-print
+  (match-lambda*
+    [(msg obj) (if *debug?* (begin (print "debug: " msg)
+				   (pretty-print obj)))]
+    [(msg) (if *debug?* (print "debug: " msg))]))
 
 (define (try-catch catcher fn)
   (call-with-current-continuation
@@ -304,10 +319,7 @@
 		      (eval content-raw (null-environment 5))
 		      content-raw))
 
-  (if *debug?*
-      (begin 
-	(debug-print "apply cfg:")
-	(pretty-print content)))
+  (debug-print "apply cfg:" content)
 
   (define apply-lst (vector->list content))
 
@@ -318,14 +330,12 @@
     
     (define apply-json (to-json-string prison))
     
-    (debug-print "apply json:")
-    (debug-print apply-json)
+    (debug-print "apply json:" apply-json)
 
     (define api-response
       (post-prison post-fn cfg apply-json))
 
-    (debug-print "api-response:")
-    (debug-print (format "~A" api-response)))
+    (debug-print "api-response:" api-response))
 
   (for-each apply-prison apply-lst)
 
@@ -456,8 +466,8 @@
       (define symlink-from (filepath:combine pwd from))
       (define symlink-to (filepath:combine pwd to))
 
-      (debug-print (format "from: ~A" symlink-from))
-      (debug-print (format "to: ~A" symlink-to))
+      (debug-print "from:" symlink-from)
+      (debug-print "to:" symlink-to)
       (create-symbolic-link symlink-from symlink-to)))
   
   (for-each symlink-to-work-area filespec-list)
@@ -467,7 +477,7 @@
   (define manifest-scm
     (format "~s" content))
 
-  (debug-print (format "manifest-json: ~A" manifest-json))
+  (debug-print "manifest-json:" manifest-json)
 
   (define meta-json-path
     (filepath:combine desmometa-path "manifest.json"))
@@ -492,8 +502,7 @@
   (define tar-cmd
     (format "2>&1 tar cvhf ~A -C ~A ." archive-path work-area-path))
 
-  (debug-print "tar-cmd:")
-  (debug-print tar-cmd)
+  (debug-print "tar-cmd:" tar-cmd)
 
   (print (format "Building archive ~A..." archive-path))
 
@@ -618,10 +627,7 @@
 	   (open-user-cfg (lambda () (read (open-input-file path)))))
       (try-catch catcher open-user-cfg)))
 
-  (if *debug?*
-      (begin
-	(debug-print "user-cfg:")
-	(pretty-print user-cfg)))
+  (debug-print "user-cfg:" user-cfg)
 
   (define subcommand-parse-result
     (parse-subcommand (caddr top-level-flags-parse-result)))
@@ -632,24 +638,23 @@
     (cadr subcommand-parse-result))
   (define subcommand-cfg
     (caddr subcommand-parse-result))
-
-  (if *debug?*
-      (begin 
-	(debug-print "subcommand-cfg:")
-	(pretty-print subcommand-cfg)))
+  
+  (debug-print "subcommand-cfg:" subcommand-cfg)
 
   (define cfg (append subcommand-cfg
 		      user-cfg
 		      default-cfg))
 
-  (if *debug?*
-      (begin
-	(debug-print "cfg:")
-	(pretty-print cfg)))
+  (debug-print "cfg:" cfg)
 
   (eval-subcommand subcommand cfg))
 
-(run-inline-tests)
+;; Only run inline tests when interpreted and setting enabled
+(cond-expand
+  ((not compiling)
+   (if *should-run-inline-tests?*
+       (test-group "desmoctl" (for-each eval *cumulative-test-cases*))))
+  (else))
 
 ;; When compiled, run the CLI when executable is run
 ;; Interpreter should load ./run.scm

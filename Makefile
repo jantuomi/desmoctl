@@ -1,14 +1,29 @@
 # Compiler and source definitions
 CC = csc
-CFLAGS = -O3 -static
+CFLAGS = -O3
 SRC = desmoctl.scm
 BIN = build/desmoctl
 
 # Default PREFIX for install, can be overridden
 PREFIX ?= /usr/bin/
 
-# Default target
-all: $(BIN)
+# Default target - do nothing
+all:
+	@echo "Available targets:"
+	@echo "  static    - Build the binary with static linking."
+	@echo "  dynamic   - Build the binary without static linking."
+	@echo "  install   - Copy the binary to the install PREFIX."
+	@echo "  deps      - Install dependencies from requirements.list."
+	@echo "  clean     - Remove built binary and other generated files."
+	@echo ""
+	@echo "Specify a target to make."
+
+# Rule for building the binary with static linking
+static: CFLAGS += -static
+static: $(BIN)
+
+# Rule for building the binary without static linking
+dynamic: $(BIN)
 
 # Rule for building the binary
 $(BIN): $(SRC)
@@ -28,5 +43,4 @@ deps:
 clean:
 	rm -rf build
 
-.PHONY: all install deps clean
-
+.PHONY: all static dynamic install deps clean

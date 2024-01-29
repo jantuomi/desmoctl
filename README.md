@@ -26,7 +26,7 @@ See `desmoctl help`.
 Run the tool in the interpreter:
 
     # Set DEBUG=1 to show debug prints
-    # Set INLINE_TESTS=1 to run unit tests before execution
+    # Set INLINE_TESTS=1 to run unit tests before execution (not available when compiled)
     csi -s run.scm
 
 ## Copyright
