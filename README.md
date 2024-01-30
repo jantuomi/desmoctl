@@ -6,10 +6,16 @@ A tool for controlling a desmofylakas cluster written in Chicken Scheme.
 
 Install [Chicken Scheme](https://wiki.call-cc.org/platforms).
 
-You also need to have these available in PATH:
+You also need to have these tools or libraries:
 
     tar
     make
+	openssl (with dev headers)
+	pkg-config
+	
+Note: on some systems you need to set `PKG_CONFIG_PATH` to a path that contains `openssl.pc`. On MacOS w/ Homebrew this would be:
+
+    export PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"
 
 Install dependencies, build and install to your preferred location:
 
