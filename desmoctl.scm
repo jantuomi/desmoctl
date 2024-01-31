@@ -28,9 +28,6 @@
 ;; Utilities ;;
 ;;;;;;;;;;;;;;;
 
-(define (id x) x)
-(define nil '())
-
 (cond-expand
   ((not compiling)
    ;; when interpreted or loaded
