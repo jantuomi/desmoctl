@@ -7,9 +7,7 @@
 	(chicken condition)
 	(chicken port)
 	(chicken io)
-	(only (chicken file)
-	      create-directory
-	      delete-directory)
+	(chicken file)
 	(only (chicken file posix)
 	      create-symbolic-link)
 	(only (chicken string)
@@ -22,7 +20,11 @@
 	(only uri-common uri-reference)
 	(only shell capture)
 	(only filepath filepath:combine filepath:take-directory)
+	(only srfi-13 string-contains)
+	srfi-133
         )
+
+(declare (compile-syntax))
 
 ;;;;;;;;;;;;;;;
 ;; Utilities ;;
@@ -89,6 +91,46 @@
      . "")
     ))
 
+(define (all predicate lst)
+  (cond ((null? lst) #t)
+        ((predicate (car lst)) (all predicate (cdr lst)))
+        (else #f)))
+
+(define (any predicate lst)
+  (cond ((null? lst) #f)
+        ((predicate (car lst)) #t)
+        (else (any predicate (cdr lst)))))
+
+(define (alist? val)
+  (and (list? val) (all pair? val)))
+
+(define (pipe x . fns)
+  (match fns
+    [() x]
+    [(fn . rest) (apply pipe (fn x) rest)]))
+
+(define (flow . fns)
+  (lambda (x) (apply pipe x fns)))
+
+(define (alist-join2 a b)
+  "Join alist1 and alist2 such that alist1 takes priority."
+  (define appended (append a b))
+  (define (join pairs)
+    (match pairs
+      [() '()]
+      [(head . tail) (alist-update (car head) (cdr head) (join tail))]))
+  (join appended))
+
+(define (alist-join . alists)
+  "Joins alist1 alist2 ... alistN such that alist1 takes priority."
+  (match alists
+    [() '()]
+    [(head) head]
+    [(head . tail)
+     (let ((joined-tail (apply alist-join tail)))
+       (alist-join2 head joined-tail)
+       )]))
+
 (define (is-flag-like? args)
   (let ([first-char (string-ref (car args) 0)])
     (eq? #\- first-char)))
@@ -129,9 +171,6 @@
 	 (from-json-string "[1,2,3]"))
    (test "transforms json bool to bool" #(#t)
 	 (from-json-string "[true]"))))
-
-(define (alist-keys alist)
-  (map (lambda (elem) (symbol->string (car elem))) alist))
 
 (define (string-repeat s n)
   (if (<= n 0)
@@ -178,6 +217,58 @@
    (test "failing command should return shell-err" 'shell-err
 	 (car (shell-command-capture "cmd-does-not-exist")))))
 
+(define (assocar key alist)
+  (match (assoc key alist)
+    [#f #f]
+    [pair (car pair)]))
+
+(define (assocdr key alist)
+  (match (assoc key alist)
+    [#f #f]
+    [pair (cdr pair)]))
+
+(define (zip lst1 lst2)
+  (if (or (null? lst1) (null? lst2))
+      '()
+      (cons (cons (car lst1) (car lst2))
+            (zip (cdr lst1) (cdr lst2)))))
+
+(inline-tests
+ (test-group "zip"
+   (test "returns correct list for even length input"
+	 '((1 . 3) (2 . 4))
+	 (zip '(1 2) '(3 4)))))
+
+(define-syntax @
+  (syntax-rules ()
+    ((_ fn-body expr ...)
+     (lambda (x) (fn-body expr ... x)))))
+
+(inline-tests
+ (test-group "@"
+   (test "expands to a lambda of one argument" 3
+	 ((@ + 1) 2))))
+
+(define *retained-imports* '())
+(define-syntax config-eval-env-symbols
+  (syntax-rules ()
+    ((_ id ...)
+     (begin
+       (define *retained-imports* (cons (cons (quote id) id)
+					*retained-imports*))
+       ...))))
+
+(config-eval-env-symbols glob format)
+
+(define (config-eval code)
+  (define keys (map car *retained-imports*))
+  (define (to-binding key)
+    `(,key (assocdr (quote ,key) *retained-imports*)))
+  (define bindings
+    (map to-binding keys))
+  (define let-expr
+    `(let ,bindings ,code))
+  (eval let-expr))
 
 ;;;;;;;;;;;;;;;;;
 ;; API adapter ;;
@@ -206,14 +297,14 @@
    #f read-string))
 
 (define (post-prison post-fn cfg prison-json)
-  (let* ((api-url (cdr (assoc 'mgmt-api-url cfg)))
-	 (api-key (cdr (assoc 'mgmt-api-key cfg)))
+  (let* ((api-url (assocdr 'mgmt-api-url cfg))
+	 (api-key (assocdr 'mgmt-api-key cfg))
 	 (req-url (string-append api-url "/prisons")))
     (post-fn req-url api-key prison-json)))
 
 (define (get-prisons get-fn cfg)
-  (let* ((api-url (cdr (assoc 'mgmt-api-url cfg)))
-	 (api-key (cdr (assoc 'mgmt-api-key cfg)))
+  (let* ((api-url (assocdr 'mgmt-api-url cfg))
+	 (api-key (assocdr 'mgmt-api-key cfg))
 	 (req-url (string-append api-url "/prisons")))
     (get-fn req-url api-key)))
 
@@ -259,11 +350,13 @@
 	 `(parse-error ,apply-usage-string)
 	 `(parse-ok ,opts))]
     [("-f" path . rest)
-     (parse-apply-flags (cons `(apply-config-path . ,path) opts)
+     (parse-apply-flags (pipe opts
+			      (@ alist-update 'apply-config-path path))
 			rest)]
     [("-F" path . rest)
-     (parse-apply-flags (append `((apply-config-path . ,path)
-				  (apply-config-eval . #t)) opts)
+     (parse-apply-flags (pipe opts
+			      (@ alist-update 'apply-config-path path)
+			      (@ alist-update 'apply-config-eval #t))
 			rest)]
     [(? is-flag-like?)
      `(parse-error ,apply-usage-string)]
@@ -304,7 +397,7 @@
 
 (define (run-apply cfg)
   (define content-raw
-    (let* ((path (or (cdr (assoc 'apply-config-path cfg))
+    (let* ((path (or (assocdr 'apply-config-path cfg)
 		     (begin (print "Error: no path to apply config supplied")
 			    (exit 1))))
 	   (catcher (lambda (e)
@@ -313,8 +406,8 @@
 	   (open-apply-cfg (lambda () (read (open-input-file path)))))
       (try-catch catcher open-apply-cfg)))
 
-  (define content (if (cdr (assoc 'apply-config-eval cfg))
-		      (eval content-raw (null-environment 5))
+  (define content (if (assocdr 'apply-config-eval cfg)
+		      (config-eval content-raw)
 		      content-raw))
 
   (debug-print "apply cfg:" content)
@@ -324,7 +417,7 @@
   (print (format "Applying all defined prisons (~A)..." (length apply-lst)))
 
   (define (apply-prison prison)
-    (print (format "Applying prison \"~A\"..." (cdr (assoc 'name prison))))
+    (print (format "Applying prison \"~A\"..." (assocdr 'name prison)))
 
     (define apply-json (to-json-string prison))
 
@@ -351,10 +444,7 @@
 
   (define prisons (vector->list (from-json-string api-response)))
 
-  (define (debug-print-prison prison)
-    (debug-print (format "~a" prison)))
-
-  (for-each debug-print-prison prisons)
+  (for-each debug-print prisons)
 
   (pretty-print-alists prisons))
 
@@ -378,8 +468,8 @@
 	   "~%"
 	   "Flags:~%"
 	   "    -f path        Path to the build manifest~%"
-	   "    -F path        Path to a Scheme program that evaluates to the build manifest-%"
-	   "    -o path        Output archive path"
+	   "    -F path        Path to a Scheme program that evaluates to the build manifest~%"
+	   "    -o path        Output archive path~%"
 	   "~%"
 	   "Subcommands:~%"
 	   "    help           Show this help text"
@@ -391,14 +481,17 @@
     [()
      `(parse-ok ,opts)]
     [("-f" path . rest)
-     (parse-build-flags (cons `(build-manifest-path . ,path) opts)
+     (parse-build-flags (pipe opts
+			      (@ alist-update 'build-manifest-path path))
 			rest)]
     [("-F" path . rest)
-     (parse-build-flags (append `((build-manifest-path . ,path)
-				  (build-manifest-eval . #t)) opts)
+     (parse-build-flags (pipe opts
+			      (@ alist-update 'build-manifest-path path)
+			      (@ alist-update 'build-manifest-eval #t))
 			rest)]
     [("-o" path . rest)
-     (parse-build-flags (cons `(build-archive-path . ,path) opts)
+     (parse-build-flags (pipe opts
+			      (@ alist-update 'build-archive-path path))
 			rest)]
     [(? is-flag-like?)
      `(parse-error ,build-usage-string)]
@@ -436,6 +529,12 @@
     [other
      other]))
 
+(define (filespec-alist-to-vec alist)
+  (define (transform pair)
+    (assert (pair? pair))
+    (format "~A:~A" (car pair) (cdr pair)))
+  (list->vector (map transform alist)))
+
 (define (run-build cfg)
   (define (run-build*)
     (print "Reading build manifest...")
@@ -451,19 +550,24 @@
 			(exit 1)))
 	     (open-build-manifest (lambda () (read (open-input-file manifest-path)))))
 	(try-catch catcher open-build-manifest)))
+    (debug-print "manifest content raw: " content-raw)
 
-    (define content (if (cdr (assoc 'build-manifest-eval cfg))
-			(eval content-raw (null-environment 5))
+    (define content (if (assocdr 'build-manifest-eval cfg)
+			(config-eval content-raw)
 			content-raw))
+    (debug-print "manifest content: " content)
+    (assert (alist? content))
 
-    (if *debug?*
-	(begin (debug-print "manifest content:")
-	       (pretty-print content)))
-
-    (define filespec-list
-      (match (assoc 'files content)
+    (define files
+      (match (assocdr 'files content)
 	[#f '()]
-	[pair (vector->list (cdr pair))]))
+	[other other]))
+
+    (if (alist? files)
+	(set! files (filespec-alist-to-vec files)))
+
+    (alist-update! 'files files content)
+    (debug-print "manifest content after files vec transform: " content)
 
     (define work-area-path "__desmowork")
     (define desmometa-path (filepath:combine work-area-path "__desmometa"))
@@ -474,6 +578,9 @@
     (define pwd (get-environment-variable "PWD"))
 
     (define (symlink-to-work-area filespec)
+      (debug-print "filespec: " filespec)
+      (assert (string-contains filespec ":"))
+
       (match-let (((from to-jail-abs) (string-split filespec ":")))
 	(define to (string-append work-area-path to-jail-abs))
 	(define to-dir (filepath:take-directory to))
@@ -483,11 +590,11 @@
 	(define symlink-from (filepath:combine pwd from))
 	(define symlink-to (filepath:combine pwd to))
 
-	(debug-print "from:" symlink-from)
-	(debug-print "to:" symlink-to)
+	(debug-print "symlink from:" symlink-from)
+	(debug-print "symlink to:" symlink-to)
 	(create-symbolic-link symlink-from symlink-to)))
 
-    (for-each symlink-to-work-area filespec-list)
+    (vector-for-each symlink-to-work-area files)
 
     (define manifest-json
       (to-json-string content))
@@ -514,7 +621,7 @@
     (write-to-a-file meta-scm-path manifest-scm)
     (write-to-a-file meta-version-path "1")
 
-    (define archive-path (cdr (assoc 'build-archive-path cfg)))
+    (define archive-path (assocdr 'build-archive-path cfg))
 
     (define tar-cmd
       (format "2>&1 tar cvhf ~A -C ~A ." archive-path work-area-path))
@@ -567,7 +674,7 @@
     [()
      `(parse-ok ,opts '())]
     [("-c" user-cfg-path . rest)
-     (parse-top-level-flags (cons `(user-cfg-path ,user-cfg-path) opts)
+     (parse-top-level-flags (alist-update 'user-cfg-path user-cfg-path opts)
                             rest)]
     [(? is-flag-like?)
      `(parse-error ,usage-string)]
@@ -624,6 +731,8 @@
      (print usage-string) 'done]
     ['subcmd-apply-help
      (print apply-usage-string) 'done]
+    ['subcmd-build-help
+     (print build-usage-string) 'done]
     [other
      (print `(eval-error ,(format "invalid subcommand: ~A" other)))]))
 
@@ -642,7 +751,7 @@
     (cadr top-level-flags-parse-result))
 
   (define user-cfg
-    (let* ((path (cdr (assoc 'user-cfg-path cfg-with-flags)))
+    (let* ((path (assocdr 'user-cfg-path cfg-with-flags))
 	   (catcher (lambda (e)
 		      (print (format "Note: no user config found at ~A" path))
 		      '()))
@@ -663,9 +772,9 @@
 
   (debug-print "subcommand-cfg:" subcommand-cfg)
 
-  (define cfg (append subcommand-cfg
-		      user-cfg
-		      default-cfg))
+  (define cfg (alist-join subcommand-cfg
+			  user-cfg
+			  default-cfg))
 
   (debug-print "cfg:" cfg)
 

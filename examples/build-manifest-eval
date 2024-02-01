@@ -1,0 +1,16 @@
+(let* (;; Glob all files under src/
+       (src-files (glob "src/*"))
+       ;; Map files to locations in nginx dir
+       (src-file-targets (map (@ string-append "/usr/share/nginx/html/") src-files))
+       ;; Construct the list of file mappings
+       (file-mappings `(("nginx.conf" . "/etc/nginx/nginx.conf")
+			. ,(zip src-files src-file-targets))))
+
+  `((packages
+     . #("nginx"))
+    (files
+     . ,file-mappings)
+    (build-commands
+     . #("sysrc nginx_enable=YES"))
+    (start-command
+     . "nginx -c nginx.conf")))
