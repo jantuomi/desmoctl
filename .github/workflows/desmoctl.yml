@@ -17,7 +17,7 @@ jobs:
       run: sudo apt update && sudo apt install -y chicken-bin
 
     - name: Install dependencies
-      run: make deps
+      run: sudo make deps
 
     - name: Run tests
       run: make test
