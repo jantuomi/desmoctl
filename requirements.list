@@ -7,3 +7,4 @@
 (uri-common "2.0")
 (filepath "1.6")
 (http-client "1.2.1")
+(srfi-133 "1.6.1")
