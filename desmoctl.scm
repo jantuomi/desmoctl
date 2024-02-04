@@ -82,7 +82,7 @@
    (test "returns catcher return value when exn thrown" 'caught
 	 (try-catch (lambda (e) 'caught) (lambda () (car '()))))))
 
-(define (id . args) (apply values args))q
+(define (id . args) (apply values args))
 
 (define (assocar key alist)
   (match (assoc key alist)
