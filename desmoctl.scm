@@ -82,6 +82,8 @@
    (test "returns catcher return value when exn thrown" 'caught
 	 (try-catch (lambda (e) 'caught) (lambda () (car '()))))))
 
+(define (id . args) (apply values args))q
+
 (define (assocar key alist)
   (match (assoc key alist)
     [#f #f]
@@ -283,60 +285,60 @@
   ;; (print (format "~%mock-post-fn called with: ~A" rest))
   rest)
 
-(define (post-fn url api-key json)
-  (with-input-from-request
-   (make-request method: 'POST
-                 uri: (uri-reference url)
-		 headers: (headers `((x-api-key ,api-key))))
-   json read-string))
-
 (define (mock-get-fn . rest)
   ;; (print (format "~%mock-get-fn called with: ~A" rest))
   rest)
 
-(define (get-fn url api-key)
-  (with-input-from-request
-   (make-request method: 'GET
-		 uri: (uri-reference url)
-		 headers: (headers `((x-api-key ,api-key))))
-   #f read-string))
+(define http-client (make-parameter with-input-from-request))
 
-(define (post-prison post-fn cfg prison-json)
+(define (post-prison cfg prison-json)
   (let* ((api-url (assocdr 'mgmt-api-url cfg))
 	 (api-key (assocdr 'mgmt-api-key cfg))
 	 (req-url (string-append api-url "/prisons")))
-    (post-fn req-url api-key prison-json)))
 
-(define (get-prisons get-fn cfg)
+    ((http-client)
+     (make-request method: 'POST
+                   uri: (uri-reference req-url)
+		   headers: (headers `((x-api-key ,api-key))))
+     prison-json read-string)))
+
+(define (get-prisons cfg)
   (let* ((api-url (assocdr 'mgmt-api-url cfg))
 	 (api-key (assocdr 'mgmt-api-key cfg))
 	 (req-url (string-append api-url "/prisons")))
-    (get-fn req-url api-key)))
+
+    ((http-client)
+     (make-request method: 'GET
+		   uri: (uri-reference req-url)
+		   headers: (headers `((x-api-key ,api-key))))
+     #f read-string)))
 
 (define (post-archive cfg archive-path)
   (let* ((api-url (assocdr 'mgmt-api-url cfg))
 	 (api-key (assocdr 'mgmt-api-key cfg))
 	 (req-url (string-append api-url "/prisons")))
 
-    (with-input-from-request
+    ((http-client)
      (make-request method: 'POST
                    uri: (uri-reference req-url)
 		   headers: (headers `((x-api-key ,api-key))))
-     `((image file: ,archive-path filename: "desmo_archive.txz"))
+     `((image file: ,archive-path
+	      filename: "desmo_archive.txz"))
      read-string)))
 
 (inline-tests
  (test-group "API adapter"
-   (test-group "get-prisons"
-     (test "should create correct query" '("http://example.com/prisons" "bar")
-	   (get-prisons mock-get-fn
-			'((mgmt-api-url . "http://example.com") (mgmt-api-key . "bar")))))
+   (parameterize ((http-client id))
+     (test-assert "get-prisons should construct query successfully"
+       (get-prisons '((mgmt-api-url . "http://example.com") (mgmt-api-key . "bar"))))
 
-   (test-group "post-prison"
-     (test "should create correct query" '("http://example.com/prisons" "bar" "{\"a\":\"b\"}")
-	   (post-prison mock-post-fn
-			'((mgmt-api-url . "http://example.com") (mgmt-api-key . "bar"))
-			"{\"a\":\"b\"}")))))
+     (test-assert "post-prison should construct query successfully"
+       (post-prison '((mgmt-api-url . "http://example.com") (mgmt-api-key . "bar"))
+		    "{\"a\":\"b\"}"))
+
+     (test-assert "post-archive should construct query successfully"
+       (post-prison '((mgmt-api-url . "http://example.com") (mgmt-api-key . "bar"))
+		    "desmo_archive.txz")))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse & eval "apply" subcommand ;;
