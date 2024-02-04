@@ -1,5 +1,7 @@
 # desmoctl
 
+[![desmoctl](https://github.com/jantuomi/desmoctl/actions/workflows/desmoctl.yml/badge.svg)](https://github.com/jantuomi/desmoctl/actions/workflows/desmoctl.yml)
+
 A tool for controlling a desmofylakas cluster written in Chicken Scheme.
 
 ## Installation
