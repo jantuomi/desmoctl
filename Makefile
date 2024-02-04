@@ -14,6 +14,7 @@ all:
 	@echo "  dynamic   - Build the binary without static linking."
 	@echo "  install   - Copy the binary to the install PREFIX."
 	@echo "  deps      - Install dependencies from requirements.list."
+	@echo "  test      - Run unit tests and exit."
 	@echo "  clean     - Remove built binary and other generated files."
 	@echo ""
 	@echo "Specify a target to make."
@@ -38,6 +39,9 @@ install:
 # Dependency installation target
 deps:
 	chicken-install -from-list requirements.list
+
+test:
+	csi -s test.scm
 
 # Clean target
 clean:

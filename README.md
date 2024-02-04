@@ -20,6 +20,7 @@ Note: on some systems you need to set `PKG_CONFIG_PATH` to a path that contains 
 Install dependencies, build and install to your preferred location:
 
     make deps
+	make test    # optionally run tests
     make dynamic # or make static
     PREFIX=$HOME/.local/bin/ make install
 
@@ -31,9 +32,10 @@ See `desmoctl help`.
 
 Run the tool in the interpreter:
 
-    # Set DEBUG=1 to show debug prints
-    # Set INLINE_TESTS=1 to run unit tests before execution (not available when compiled)
-    csi -s run.scm
+    csi -s run.scm  # run CLI
+	csi -s test.scm # run unit tests
+	
+In my workflow, loading `desmoctl.scm` to a long-lived REPL is pretty convenient.
 
 ## Copyright
 

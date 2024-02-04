@@ -24,31 +24,32 @@
 	srfi-133
         )
 
+;; Retain macro symbols in runtime when compiled
 (declare (compile-syntax))
 
-;;;;;;;;;;;;;;;
-;; Utilities ;;
-;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Conditional execution ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define *run-tests?*
+  (equal? "1"
+	  (or (get-environment-variable "RUN_TESTS") "1")))
+
+(define *debug?*
+  (equal? "1"
+	  (or (get-environment-variable "DEBUG") "0")))
 
 (cond-expand
   ((not compiling)
    ;; when interpreted or loaded
 
-   (import (only test test-group test))
-
-   (define *should-run-inline-tests?*
-     (let ((v (get-environment-variable "INLINE_TESTS")))
-       (and (string? v)
-	    (string=? v "1"))))
-
-   (define *cumulative-test-cases* '())
+   (import test)
 
    (define-syntax inline-tests
      (syntax-rules ()
        ((_ expr ...)
-	(if *should-run-inline-tests?*
-	    (set! *cumulative-test-cases* (append (quote (expr ...))
-						  *cumulative-test-cases*)))))))
+	(if *run-tests?*
+	    (begin expr ...))))))
 
   (else
    ;; when compiled
@@ -58,10 +59,9 @@
        ((_ expr ...)
 	(void))))))
 
-(define *debug?*
-  (let ((v (get-environment-variable "DEBUG")))
-    (and (string? v)
-	 (string=? v "1"))))
+;;;;;;;;;;;;;;;
+;; Utilities ;;
+;;;;;;;;;;;;;;;
 
 (define debug-print
   (match-lambda*
@@ -82,24 +82,61 @@
    (test "returns catcher return value when exn thrown" 'caught
 	 (try-catch (lambda (e) 'caught) (lambda () (car '()))))))
 
-(define default-cfg
-  `((user-cfg-path
-     . ,(filepath:combine (get-environment-variable "HOME") ".desmorc"))
-    (mgmt-api-url
-     . "http://localhost:9939")
-    (mgmt-api-key
-     . "")
-    ))
+(define (assocar key alist)
+  (match (assoc key alist)
+    [#f #f]
+    [pair (car pair)]))
+
+(define (assocdr key alist)
+  (match (assoc key alist)
+    [#f #f]
+    [pair (cdr pair)]))
+
+(define (zip lst1 lst2)
+  (if (or (null? lst1) (null? lst2))
+      '()
+      (cons (cons (car lst1) (car lst2))
+            (zip (cdr lst1) (cdr lst2)))))
+
+(inline-tests
+ (test-group "zip"
+   (test "returns correct list for even length input"
+	 '((1 . 3) (2 . 4))
+	 (zip '(1 2) '(3 4)))))
+
+(define-syntax @
+  (syntax-rules ()
+    ((_ fn-body expr ...)
+     (lambda (x) (fn-body expr ... x)))))
+
+(inline-tests
+ (test-group "@"
+   (test "expands to a lambda of one argument" 3
+	 ((@ + 1) 2))))
 
 (define (all predicate lst)
   (cond ((null? lst) #t)
         ((predicate (car lst)) (all predicate (cdr lst)))
         (else #f)))
 
+(inline-tests
+ (test-group "all"
+   (test-assert "returns true when all satisfy pred"
+     (all (@ equal? 1) (list 1 1 1)))
+   (test "returns false when some do not satisfy pred" #f
+     (all (@ equal? 1) (list 2 1 4)))))
+
 (define (any predicate lst)
   (cond ((null? lst) #f)
         ((predicate (car lst)) #t)
         (else (any predicate (cdr lst)))))
+
+(inline-tests
+ (test-group "any"
+   (test-assert "returns true when some satisfy pred"
+     (any (@ equal? 1) (list 1 1 2)))
+   (test "returns false when none satisfy pred" #f
+     (any (@ equal? 1) (list 2 3 4)))))
 
 (define (alist? val)
   (and (list? val) (all pair? val)))
@@ -217,43 +254,11 @@
    (test "failing command should return shell-err" 'shell-err
 	 (car (shell-command-capture "cmd-does-not-exist")))))
 
-(define (assocar key alist)
-  (match (assoc key alist)
-    [#f #f]
-    [pair (car pair)]))
-
-(define (assocdr key alist)
-  (match (assoc key alist)
-    [#f #f]
-    [pair (cdr pair)]))
-
-(define (zip lst1 lst2)
-  (if (or (null? lst1) (null? lst2))
-      '()
-      (cons (cons (car lst1) (car lst2))
-            (zip (cdr lst1) (cdr lst2)))))
-
-(inline-tests
- (test-group "zip"
-   (test "returns correct list for even length input"
-	 '((1 . 3) (2 . 4))
-	 (zip '(1 2) '(3 4)))))
-
-(define-syntax @
-  (syntax-rules ()
-    ((_ fn-body expr ...)
-     (lambda (x) (fn-body expr ... x)))))
-
-(inline-tests
- (test-group "@"
-   (test "expands to a lambda of one argument" 3
-	 ((@ + 1) 2))))
-
-(define *retained-imports* '())
 (define-syntax config-eval-env-symbols
   (syntax-rules ()
     ((_ id ...)
      (begin
+       (define *retained-imports* '())
        (define *retained-imports* (cons (cons (quote id) id)
 					*retained-imports*))
        ...))))
@@ -648,6 +653,15 @@
 ;; Parse flags and subcommand ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define default-cfg
+  `((user-cfg-path
+     . ,(filepath:combine (get-environment-variable "HOME") ".desmorc"))
+    (mgmt-api-url
+     . "http://localhost:9939")
+    (mgmt-api-key
+     . "")
+    ))
+
 (define usage-string
   (format (string-append
            "Usage: desmoctl [-c cfg-path] SUBCOMMAND~%"
@@ -779,13 +793,6 @@
   (debug-print "cfg:" cfg)
 
   (eval-subcommand subcommand cfg))
-
-;; Only run inline tests when interpreted and setting enabled
-(cond-expand
-  ((not compiling)
-   (if *should-run-inline-tests?*
-       (test-group "desmoctl" (for-each eval *cumulative-test-cases*))))
-  (else))
 
 ;; When compiled, run the CLI when executable is run
 ;; Interpreter should load ./run.scm
