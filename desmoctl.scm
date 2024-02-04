@@ -124,7 +124,7 @@
    (test-assert "returns true when all satisfy pred"
      (all (@ equal? 1) (list 1 1 1)))
    (test "returns false when some do not satisfy pred" #f
-     (all (@ equal? 1) (list 2 1 4)))))
+	 (all (@ equal? 1) (list 2 1 4)))))
 
 (define (any predicate lst)
   (cond ((null? lst) #f)
@@ -136,7 +136,7 @@
    (test-assert "returns true when some satisfy pred"
      (any (@ equal? 1) (list 1 1 2)))
    (test "returns false when none satisfy pred" #f
-     (any (@ equal? 1) (list 2 3 4)))))
+	 (any (@ equal? 1) (list 2 3 4)))))
 
 (define (alist? val)
   (and (list? val) (all pair? val)))
@@ -312,6 +312,18 @@
 	 (api-key (assocdr 'mgmt-api-key cfg))
 	 (req-url (string-append api-url "/prisons")))
     (get-fn req-url api-key)))
+
+(define (post-archive cfg archive-path)
+  (let* ((api-url (assocdr 'mgmt-api-url cfg))
+	 (api-key (assocdr 'mgmt-api-key cfg))
+	 (req-url (string-append api-url "/prisons")))
+
+    (with-input-from-request
+     (make-request method: 'POST
+                   uri: (uri-reference req-url)
+		   headers: (headers `((x-api-key ,api-key))))
+     `((image file: ,archive-path filename: "desmo_archive.txz"))
+     read-string)))
 
 (inline-tests
  (test-group "API adapter"
@@ -545,9 +557,9 @@
     (print "Reading build manifest...")
 
     (define manifest-path
-      (cdr (or (assoc 'build-manifest-path cfg)
-	       (begin (print "Error: no path to build manifest supplied")
-		      (exit 1)))))
+      (or (assocdr 'build-manifest-path cfg)
+	  (begin (print "Error: no path to build manifest supplied")
+		 (exit 1))))
 
     (define content-raw
       (let* ((catcher (lambda (e)
@@ -649,6 +661,68 @@
 				(exit 1)))
 	     run-build*))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Parse and eval "push" subcommand ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define default-push-cfg
+  '((push-archive-path
+     . "desmo_archive.txz")))
+
+(define push-usage-string
+  (format (string-append
+           "Usage: desmoctl push [-a archive-path] SUBCOMMAND~%"
+           "~%"
+           "Push a desmo workload archive to a Desmofylakas server.~%"
+	   "~%"
+	   "Flags:~%"
+	   "    -a path        Path to the build manifest~%"
+	   "~%"
+	   "Subcommands:~%"
+	   "    help           Show this help text"
+           )))
+
+(define (parse-push-flags opts args)
+  "Returns an alist of opts"
+  (match args
+    [()
+     `(parse-ok ,opts)]
+    [("-a" path . rest)
+     (parse-push-flags (pipe opts
+			     (@ alist-update 'push-archive-path path))
+		       rest)]
+    [(? is-flag-like?)
+     `(parse-error ,push-usage-string)]
+    [("help")
+     `(parse-ok subcmd-push-help)]
+    [_
+     `(parse-error ,push-usage-string)]))
+
+(define (parse-subcommand-push push-cfg args)
+  (match (parse-push-flags push-cfg args)
+    [('parse-ok 'subcmd-push-help)
+     `(parse-ok subcmd-push-help ())]
+    [('parse-ok opts)
+     `(parse-ok subcmd-push ,opts)]
+    [other
+     other]))
+
+(define (run-push cfg)
+  (define (run-push*)
+    (print "Pushing prison archive...")
+    (define archive-path (or (assocdr 'push-archive-path cfg)
+			     (begin (print "Error: no path to archive supplied")
+				    (exit 1))))
+
+    (debug-print "archive-path: " archive-path)
+    (post-archive cfg archive-path)
+    (print "Push complete."))
+
+  (try-catch (lambda (e) (begin (print "Error: push failed")
+				(print-error-message e)
+				(exit 1)))
+	     run-push*))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parse flags and subcommand ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -710,8 +784,8 @@
   (match args
     [("build" . rest)
      (parse-subcommand-build default-build-cfg rest)]
-    [("push")
-     '(parse-ok subcmd-push ())]
+    [("push" . rest)
+     (parse-subcommand-push default-push-cfg rest)]
     [("apply" . rest)
      (parse-subcommand-apply default-apply-cfg rest)]
     [("status")
@@ -735,8 +809,7 @@
 (define (eval-subcommand subcmd cfg)
   (match subcmd
     ['subcmd-build (run-build cfg)]
-    ['subcmd-push (print "TODO push")
-		  (exit 1)]
+    ['subcmd-push (run-push cfg)]
     ['subcmd-apply (run-apply cfg)]
     ['subcmd-status (run-status cfg)]
     ['subcmd-logs (print "TODO logs")
@@ -747,6 +820,8 @@
      (print apply-usage-string) 'done]
     ['subcmd-build-help
      (print build-usage-string) 'done]
+    ['subcmd-push-help
+     (print push-usage-string) 'done]
     [other
      (print `(eval-error ,(format "invalid subcommand: ~A" other)))]))
 
