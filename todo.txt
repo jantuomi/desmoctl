@@ -1,5 +1,5 @@
 2024-01-31 Fix OpenSSL static compilation bug
 2024-01-31 Implement log subcommand
 2024-01-31 Implement push subcommand
-2024-01-31 Add "make test" that runs all tests and returns exit code 0 or 1
-2024-01-31 Add CI/CD for building and releasing tagged commits
+x 2024-02-04 2024-01-31 Add "make test" that runs all tests and returns exit code 0 or 1
+x 2024-02-04 2024-01-31 Add CI/CD for building and releasing tagged commits
