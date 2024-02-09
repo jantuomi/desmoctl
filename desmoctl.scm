@@ -281,14 +281,6 @@
 ;; API adapter ;;
 ;;;;;;;;;;;;;;;;;
 
-(define (mock-post-fn . rest)
-  ;; (print (format "~%mock-post-fn called with: ~A" rest))
-  rest)
-
-(define (mock-get-fn . rest)
-  ;; (print (format "~%mock-get-fn called with: ~A" rest))
-  rest)
-
 (define http-client (make-parameter with-input-from-request))
 
 (define (post-prison cfg prison-json)
