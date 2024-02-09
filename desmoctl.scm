@@ -443,7 +443,7 @@
     (debug-print "apply json:" apply-json)
 
     (define api-response
-      (post-prison post-fn cfg apply-json))
+      (post-prison cfg apply-json))
 
     (debug-print "api-response:" api-response))
 
@@ -459,7 +459,7 @@
   (print "Fetching status of all prisons...")
 
   (define api-response
-    (get-prisons get-fn cfg))
+    (get-prisons cfg))
 
   (define prisons (vector->list (from-json-string api-response)))
 
